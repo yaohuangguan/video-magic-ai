@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local VideoMagic runtime
+.local/
+engine/.venv/
+src-tauri/target/

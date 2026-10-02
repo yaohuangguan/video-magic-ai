@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import "./App.css";
+import "./app.css";
 
 type VoicePreset = {
   id: string;
