@@ -1,4 +1,4 @@
-# VoiceMagic
+# VideoMagic
 
 Local-first AI commentary studio for turning a source video and narration script into a finished voiceover video.
 
@@ -42,12 +42,12 @@ See `docs/engine-protocol.md`.
 ## Repository
 
 ```text
-voicemagic/
+videomagic/
 ├── src/
 ├── src-tauri/
 ├── engine/
 │   ├── pyproject.toml
-│   └── voicemagic_engine/
+│   └── videomagic_engine/
 └── docs/
     └── engine-protocol.md
 ```

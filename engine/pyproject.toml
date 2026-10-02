@@ -1,12 +1,12 @@
 [project]
-name = "voicemagic-engine"
+name = "videomagic-engine"
 version = "0.1.0"
-description = "Local inference and media engine for VoiceMagic"
+description = "Local inference and media engine for VideoMagic"
 requires-python = ">=3.11"
 dependencies = []
 
 [project.scripts]
-voicemagic-engine = "voicemagic_engine.main:main"
+videomagic-engine = "videomagic_engine.main:main"
 
 [build-system]
 requires = ["hatchling"]

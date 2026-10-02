@@ -1,6 +1,6 @@
-# VoiceMagic local engine protocol
+# VideoMagic local engine protocol
 
-VoiceMagic keeps the heavy AI/media process outside the UI.
+VideoMagic keeps the heavy AI/media process outside the UI.
 
 ## Transport
 
@@ -10,7 +10,7 @@ This is intentional:
 - no localhost port to expose or collide with;
 - the TTS model can stay loaded between jobs;
 - progress events can stream to the desktop UI;
-- the Python engine can later be packaged as `voicemagic-engine.exe` with PyInstaller.
+- the Python engine can later be packaged as `videomagic-engine.exe` with PyInstaller.
 
 ## Request
 
