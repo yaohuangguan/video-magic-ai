@@ -37,7 +37,7 @@ function App() {
         <div className="brand">
           <div className="brand-mark">Q</div>
           <div>
-            <strong>QuipDub</strong>
+            <strong>VoiceMagic</strong>
             <span>Local AI commentary studio</span>
           </div>
         </div>
@@ -48,7 +48,7 @@ function App() {
         <p className="eyebrow">WINDOWS · V0.1</p>
         <h1>Turn a clip and a script into a finished voiceover video.</h1>
         <p className="hero-copy">
-          Your video stays on this computer. QuipDub generates narration locally,
+          Your video stays on this computer. VoiceMagic generates narration locally,
           ducks the source audio, builds subtitles, and renders the final MP4.
         </p>
       </section>

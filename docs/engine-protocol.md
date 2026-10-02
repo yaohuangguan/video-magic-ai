@@ -1,6 +1,6 @@
-# QuipDub local engine protocol
+# VoiceMagic local engine protocol
 
-QuipDub keeps the heavy AI/media process outside the UI.
+VoiceMagic keeps the heavy AI/media process outside the UI.
 
 ## Transport
 
@@ -10,7 +10,7 @@ This is intentional:
 - no localhost port to expose or collide with;
 - the TTS model can stay loaded between jobs;
 - progress events can stream to the desktop UI;
-- the Python engine can later be packaged as `quipdub-engine.exe` with PyInstaller.
+- the Python engine can later be packaged as `voicemagic-engine.exe` with PyInstaller.
 
 ## Request
 

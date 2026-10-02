@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    quipdub_lib::run()
+    voicemagic_lib::run()
 }

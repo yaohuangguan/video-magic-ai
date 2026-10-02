@@ -1,4 +1,4 @@
-# QuipDub V0.1 roadmap
+# VoiceMagic V0.1 roadmap
 
 ## Milestone 1 — Windows shell
 - Tauri 2 app runs on Windows 10/11.

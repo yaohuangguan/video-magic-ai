@@ -1,4 +1,4 @@
-# QuipDub
+# VoiceMagic
 
 Local-first AI commentary studio for turning a source video and narration script into a finished voiceover video.
 
@@ -42,12 +42,12 @@ See `docs/engine-protocol.md`.
 ## Repository
 
 ```text
-quipdub/
+voicemagic/
 ├── src/
 ├── src-tauri/
 ├── engine/
 │   ├── pyproject.toml
-│   └── quipdub_engine/
+│   └── voicemagic_engine/
 └── docs/
     └── engine-protocol.md
 ```
