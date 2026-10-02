@@ -1,0 +1,13 @@
+[project]
+name = "quipdub-engine"
+version = "0.1.0"
+description = "Local inference and media engine for QuipDub"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+quipdub-engine = "quipdub_engine.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
