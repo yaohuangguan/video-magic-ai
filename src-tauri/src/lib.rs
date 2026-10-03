@@ -36,6 +36,69 @@ fn runtime_config_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("runtime-location.txt"))
 }
 
+fn recent_projects_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("Could not resolve app config directory: {error}"))?;
+    fs::create_dir_all(&dir)
+        .map_err(|error| format!("Could not create app config directory: {error}"))?;
+    Ok(dir.join("recent-projects.json"))
+}
+
+fn read_recent_projects(app: &AppHandle) -> Result<Vec<Value>, String> {
+    let path = recent_projects_path(app)?;
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let content = fs::read_to_string(&path)
+        .map_err(|error| format!("Could not read recent projects: {error}"))?;
+    serde_json::from_str::<Vec<Value>>(&content)
+        .map_err(|error| format!("Could not parse recent projects: {error}"))
+}
+
+fn write_recent_projects(app: &AppHandle, items: &[Value]) -> Result<(), String> {
+    let path = recent_projects_path(app)?;
+    let content = serde_json::to_string_pretty(items)
+        .map_err(|error| format!("Could not serialize recent projects: {error}"))?;
+    fs::write(path, content.as_bytes())
+        .map_err(|error| format!("Could not save recent projects: {error}"))
+}
+
+fn remember_recent_project(app: &AppHandle, target: &Path) -> Result<(), String> {
+    let path_text = target.to_string_lossy().to_string();
+    let mut items = read_recent_projects(app)?;
+    items.retain(|item| {
+        item.get("path")
+            .and_then(Value::as_str)
+            .map(|value| value != path_text)
+            .unwrap_or(true)
+    });
+
+    let name = target
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Untitled Project");
+    let last_opened = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("System clock error: {error}"))?
+        .as_secs();
+
+    items.insert(
+        0,
+        json!({
+            "path": path_text,
+            "name": name,
+            "lastOpened": last_opened,
+            "exists": target.exists()
+        }),
+    );
+    items.truncate(12);
+    write_recent_projects(app, &items)
+}
+
 fn configured_runtime_home(app: &AppHandle) -> Result<Option<PathBuf>, String> {
     if let Some(path) = env::var_os("VIDEOMAGIC_HOME") {
         return Ok(Some(PathBuf::from(path)));
@@ -163,7 +226,11 @@ fn ensure_runtime_dirs(local: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn configured_engine_command(python: &Path, local: &Path) -> Command {
+fn configured_engine_command(
+    python: &Path,
+    local: &Path,
+    device_mode: Option<&str>,
+) -> Command {
     let ffmpeg_bin = local.join("tools").join("ffmpeg").join("bin");
     let path_separator = if cfg!(target_os = "windows") { ";" } else { ":" };
     let path_env = format!(
@@ -184,6 +251,13 @@ fn configured_engine_command(python: &Path, local: &Path) -> Command {
         .env("TEMP", local.join("tmp"))
         .env("TMPDIR", local.join("tmp"))
         .env("PATH", path_env);
+
+    if let Some(mode) = device_mode {
+        if matches!(mode, "cpu" | "cuda") {
+            command.env("VIDEOMAGIC_TTS_DEVICE", mode);
+        }
+    }
+
     command
 }
 
@@ -229,7 +303,7 @@ fn final_engine_message(stdout: &str, stderr: &str) -> Result<Value, String> {
     Ok(message.get("result").cloned().unwrap_or(Value::Null))
 }
 
-fn run_engine_request(local: &Path, request: Value) -> Result<Value, String> {
+fn run_engine_request(local: &Path, request: Value, device_mode: Option<&str>) -> Result<Value, String> {
     ensure_runtime_dirs(local)?;
     let python = engine_python(local)?;
     if !python.exists() {
@@ -239,7 +313,7 @@ fn run_engine_request(local: &Path, request: Value) -> Result<Value, String> {
         ));
     }
 
-    let mut child = configured_engine_command(&python, local)
+    let mut child = configured_engine_command(&python, local, device_mode)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -313,7 +387,44 @@ fn runtime_status(app: AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command]
-fn save_project_file(path: String, project: Value) -> Result<Value, String> {
+fn recent_projects(app: AppHandle) -> Result<Vec<Value>, String> {
+    let items = read_recent_projects(&app)?;
+    Ok(items
+        .into_iter()
+        .map(|mut item| {
+            if let Some(path) = item.get("path").and_then(Value::as_str) {
+                let exists = Path::new(path).exists();
+                if let Some(object) = item.as_object_mut() {
+                    object.insert("exists".to_string(), json!(exists));
+                }
+            }
+            item
+        })
+        .collect())
+}
+
+#[tauri::command]
+fn remove_recent_project(app: AppHandle, path: String) -> Result<bool, String> {
+    let mut items = read_recent_projects(&app)?;
+    let before = items.len();
+    items.retain(|item| {
+        item.get("path")
+            .and_then(Value::as_str)
+            .map(|value| value != path)
+            .unwrap_or(true)
+    });
+    write_recent_projects(&app, &items)?;
+    Ok(items.len() != before)
+}
+
+#[tauri::command]
+fn clear_recent_projects(app: AppHandle) -> Result<bool, String> {
+    write_recent_projects(&app, &[])?;
+    Ok(true)
+}
+
+#[tauri::command]
+fn save_project_file(app: AppHandle, path: String, project: Value) -> Result<Value, String> {
     let target = PathBuf::from(path.trim());
     if target.as_os_str().is_empty() {
         return Err("Project path is empty.".to_string());
@@ -327,6 +438,7 @@ fn save_project_file(path: String, project: Value) -> Result<Value, String> {
         .map_err(|error| format!("Could not serialize project: {error}"))?;
     fs::write(&target, content.as_bytes())
         .map_err(|error| format!("Could not save project: {error}"))?;
+    remember_recent_project(&app, &target)?;
 
     Ok(json!({
         "path": target,
@@ -335,12 +447,13 @@ fn save_project_file(path: String, project: Value) -> Result<Value, String> {
 }
 
 #[tauri::command]
-fn load_project_file(path: String) -> Result<Value, String> {
+fn load_project_file(app: AppHandle, path: String) -> Result<Value, String> {
     let target = PathBuf::from(path.trim());
     let content = fs::read_to_string(&target)
         .map_err(|error| format!("Could not read project file: {error}"))?;
     let value = serde_json::from_str::<Value>(&content)
         .map_err(|error| format!("Invalid VideoMagic project file: {error}"))?;
+    remember_recent_project(&app, &target)?;
 
     Ok(json!({
         "path": target,
@@ -486,6 +599,7 @@ async fn preview_voice(
     voice: String,
     speed: f64,
     text: String,
+    device_mode: String,
 ) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let local = configured_runtime_home(&app)?
@@ -514,6 +628,7 @@ async fn preview_voice(
                     "outputPath": preview_path
                 }
             }),
+            Some(device_mode.as_str()),
         )?;
 
         let path = result
@@ -564,6 +679,7 @@ fn render_video_sync(
     ducking: bool,
     auto_timing: bool,
     subtitles: bool,
+    device_mode: String,
 ) -> Result<Value, String> {
     let local = configured_runtime_home(&app)?
         .ok_or_else(|| "Local AI runtime is not configured. Run setup first.".to_string())?;
@@ -595,7 +711,7 @@ fn render_video_sync(
 
     task_state.cancel_requested.store(false, Ordering::SeqCst);
 
-    let mut child = configured_engine_command(&python, &local)
+    let mut child = configured_engine_command(&python, &local, Some(device_mode.as_str()))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -708,6 +824,7 @@ async fn render_video(
     ducking: bool,
     auto_timing: bool,
     subtitles: bool,
+    device_mode: String,
 ) -> Result<Value, String> {
     let task_state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -723,6 +840,7 @@ async fn render_video(
             ducking,
             auto_timing,
             subtitles,
+            device_mode,
         )
     })
     .await
@@ -772,6 +890,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             runtime_status,
+            recent_projects,
+            remove_recent_project,
+            clear_recent_projects,
             save_project_file,
             load_project_file,
             bootstrap_runtime,

@@ -19,7 +19,7 @@ Current working flow:
 
 The source video never needs to be uploaded for the core workflow. Voice presets can be previewed before rendering.
 
-The desktop workspace also supports drag-and-drop import, autosave/restore, native `.vmagic` project files, explicit Open/Save/Save As, custom export folders, and desktop keyboard shortcuts.
+The desktop workspace also supports drag-and-drop import, autosave/restore, native `.vmagic` project files, explicit Open/Save/Save As, recent-project recall, reusable creator presets, custom export folders, desktop keyboard shortcuts, and selectable Auto/GPU/CPU inference.
 
 ## Current implementation
 
@@ -67,7 +67,12 @@ Verified on the Windows development PC:
 - automatic narration timing and speed fitting;
 - synchronized SRT generation;
 - burned-in Chinese subtitles;
-- NVIDIA H.264 subtitle rendering when available.
+- NVIDIA H.264 subtitle rendering when available;
+- explicit CPU inference mode;
+- automatic CUDA-to-CPU fallback in Auto mode;
+- recent project persistence in native app config;
+- reusable creator presets;
+- repair-in-place runtime recovery.
 
 A real 12-second end-to-end render has been completed from the bootstrapped runtime without using the development venv or system FFmpeg. The smart-ducking and auto-timed subtitle paths have both been rendered successfully on Windows.
 
@@ -143,7 +148,7 @@ VideoMagic then installs into that data directory:
 - FFmpeg / FFprobe;
 - Hugging Face, Torch, pip, Python and temporary caches.
 
-The bootstrap has been verified end to end on Windows and the installed NSIS resources have been used successfully. The remaining release check is a true clean-machine/VM test plus better visible setup progress and recovery UX.
+The bootstrap has been verified end to end on Windows and the installed NSIS resources have been used successfully. The desktop UI can rerun setup against the existing data directory as a repair operation. The remaining release check is a true clean-machine/VM test, code signing, and updater hardening.
 
 ## Product principles
 
