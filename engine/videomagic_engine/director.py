@@ -295,6 +295,7 @@ def plan_video_edit(
         add_generation_prompt=True,
         return_dict=True,
         return_tensors="pt",
+        do_sample_frames=False,
     ).to(model.device)
 
     generated_ids = model.generate(
