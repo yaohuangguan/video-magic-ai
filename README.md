@@ -2,7 +2,7 @@
 
 Local-first AI commentary studio for turning a source video and narration script into a finished voiceover video.
 
-[Website](https://yaohuangguan.github.io/video-magic-ai/) · [Download Windows](https://github.com/yaohuangguan/video-magic-ai/releases/latest/download/VideoMagic-Windows-x64-setup.exe) · [Releases](https://github.com/yaohuangguan/video-magic-ai/releases) · [Roadmap](ROADMAP.md)
+[Website](https://videomagic.pages.dev/) · [Download Windows](https://github.com/yaohuangguan/video-magic-ai/releases/latest/download/VideoMagic-Windows-x64-setup.exe) · [Releases](https://github.com/yaohuangguan/video-magic-ai/releases) · [Roadmap](ROADMAP.md)
 
 ![Windows CI](https://github.com/yaohuangguan/video-magic-ai/actions/workflows/windows-ci.yml/badge.svg)
 ![Latest Release](https://img.shields.io/github/v/release/yaohuangguan/video-magic-ai?display_name=tag)
@@ -152,7 +152,7 @@ The local Python engine currently uses a project venv during development. This i
 
 Pull requests and main-branch pushes run **Windows CI**. After a successful CI run on `main`, **Release Windows** automatically calculates the next patch version, builds the NSIS installer, creates the Git tag and GitHub Release, and uploads a stable installer name plus its SHA-256 checksum.
 
-The product website in `site/` is deployed by **Deploy Website** to GitHub Pages. See [docs/releasing.md](docs/releasing.md) for the release path. Public distribution still needs Windows code signing and updater hardening.
+The product website source lives in `site/` and is published at [videomagic.pages.dev](https://videomagic.pages.dev/) through Cloudflare Pages. See [docs/releasing.md](docs/releasing.md) for the Windows release path and website deployment command. Public distribution still needs Windows code signing and updater hardening.
 
 ## First-run runtime bootstrap
 
