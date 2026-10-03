@@ -1,0 +1,75 @@
+name: Bug report
+description: Report a reproducible VideoMagic problem.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve VideoMagic. Please avoid uploading private source videos unless they are safe to share publicly.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the problem and what you expected instead.
+      placeholder: "I imported a video, built a timeline, then..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open VideoMagic
+        2. Import ...
+        3. Click ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: inference
+    attributes:
+      label: Inference mode
+      options:
+        - Auto
+        - GPU / CUDA
+        - CPU
+        - Not relevant
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: VideoMagic version
+      placeholder: "e.g. v0.1.1"
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "e.g. Windows 11 24H2"
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics / logs
+      description: Paste relevant Settings & diagnostics output or render error text. Remove sensitive file paths if needed.
+      render: text
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I checked existing issues for the same problem.
+          required: true
+        - label: I understand public issues are visible to everyone.
+          required: true

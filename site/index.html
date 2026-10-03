@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#f6f3ec" />
+  <meta name="description" content="VideoMagic is a local-first Windows studio that turns a video and narration script into a finished AI voiceover video." />
+  <meta property="og:title" content="VideoMagic — Local AI voiceover studio" />
+  <meta property="og:description" content="Import a clip, write narration, edit timing on a visual timeline, and render locally." />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="./icon.png" />
+  <link rel="icon" href="./icon.png" />
+  <link rel="canonical" href="https://yaohuangguan.github.io/video-magic-ai/" />
+  <link rel="stylesheet" href="./styles.css" />
+  <title>VideoMagic — Local AI Voiceover Studio</title>
+</head>
+<body>
+  <header class="nav shell">
+    <a class="brand" href="#top" aria-label="VideoMagic home">
+      <img src="./icon.png" alt="" />
+      <span>VideoMagic</span>
+    </a>
+    <nav>
+      <a href="#workflow">Workflow</a>
+      <a href="#features">Features</a>
+      <a href="#local">Local AI</a>
+      <a href="#download">Download</a>
+      <a class="nav-github" href="https://github.com/yaohuangguan/video-magic-ai">GitHub ↗</a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero shell">
+      <div class="hero-copy">
+        <div class="eyebrow"><span></span> WINDOWS FIRST · LOCAL BY DEFAULT</div>
+        <h1>Turn a clip and script into a finished <em>AI voiceover video.</em></h1>
+        <p class="hero-lead">
+          Import a local video, write the narration, place each sentence on a visual timeline,
+          preview the voice, then render subtitles, ducking and the final MP4 on your own PC.
+        </p>
+        <div class="hero-actions">
+          <a class="button primary download-link" href="https://github.com/yaohuangguan/video-magic-ai/releases/latest/download/VideoMagic-Windows-x64-setup.exe">
+            <span>Download for Windows</span>
+            <small class="release-label">Latest release</small>
+          </a>
+          <a class="button secondary" href="https://github.com/yaohuangguan/video-magic-ai">
+            View source on GitHub
+          </a>
+        </div>
+        <div class="hero-meta">
+          <span>✓ Source video stays local</span>
+          <span>✓ CUDA or CPU</span>
+          <span>✓ No cloud TTS API required</span>
+        </div>
+      </div>
+
+      <div class="studio-preview" aria-label="VideoMagic creator timeline preview">
+        <div class="window-bar">
+          <div class="traffic"><i></i><i></i><i></i></div>
+          <strong>VideoMagic</strong>
+          <span>Local AI ready</span>
+        </div>
+        <div class="mock-body">
+          <div class="mock-video">
+            <div class="video-grid"></div>
+            <div class="play-disc">▶</div>
+            <div class="video-caption">00:07.2 / 00:12.0</div>
+          </div>
+          <div class="mock-script">
+            <small>NARRATION SCRIPT</small>
+            <p>不是哥们，这猴子是真的没拿自己当外人。</p>
+            <p>上来先把游客的可乐抢了，下一秒更离谱……</p>
+          </div>
+          <div class="mock-timeline">
+            <div class="timeline-head">
+              <span>NARRATION</span>
+              <small>Waveform · manual timing</small>
+            </div>
+            <div class="wave">
+              <i style="height:28%"></i><i style="height:62%"></i><i style="height:44%"></i><i style="height:78%"></i><i style="height:36%"></i><i style="height:66%"></i><i style="height:48%"></i><i style="height:88%"></i><i style="height:53%"></i><i style="height:72%"></i><i style="height:32%"></i><i style="height:63%"></i><i style="height:48%"></i><i style="height:82%"></i><i style="height:41%"></i><i style="height:68%"></i><i style="height:54%"></i><i style="height:73%"></i><i style="height:38%"></i><i style="height:61%"></i>
+            </div>
+            <div class="clip c1"><b>01</b><span>这猴子是真的没拿自己当外人</span></div>
+            <div class="clip c2"><b>02</b><span>下一秒更离谱</span></div>
+            <div class="playhead"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="proof shell">
+      <div><strong>Local media</strong><span>Video never needs to be uploaded for the core workflow.</span></div>
+      <div><strong>Real timeline</strong><span>Dragging a block changes where narration is physically rendered.</span></div>
+      <div><strong>Native output</strong><span>H.264/AAC MP4, synchronized subtitles and smart ducking.</span></div>
+    </section>
+
+    <section class="section shell" id="workflow">
+      <div class="section-intro">
+        <span class="section-kicker">THE WORKFLOW</span>
+        <h2>From source clip to finished commentary, in one workspace.</h2>
+        <p>The simple path stays simple. Use automatic timing when it is good enough, or open the creator timeline when you want control.</p>
+      </div>
+
+      <div class="steps">
+        <article><span>01</span><h3>Import</h3><p>Choose or drag in MP4, MOV, MKV, WEBM or M4V. VideoMagic probes duration and audio locally.</p></article>
+        <article><span>02</span><h3>Write</h3><p>Paste Mandarin narration and choose a local voice preset. Preview the voice before committing to a render.</p></article>
+        <article><span>03</span><h3>Time it</h3><p>Auto-spread sentences, or drag and resize narration blocks against the source-audio waveform.</p></article>
+        <article><span>04</span><h3>Render</h3><p>Generate voice, synchronized subtitles, source-audio ducking and the final MP4 with progress and cancel controls.</p></article>
+      </div>
+    </section>
+
+    <section class="section feature-section" id="features">
+      <div class="shell">
+        <div class="section-intro">
+          <span class="section-kicker">CREATOR TOOLS</span>
+          <h2>Enough control to edit the story, without becoming a full NLE.</h2>
+        </div>
+
+        <div class="feature-grid">
+          <article class="feature large">
+            <div class="feature-number">01</div>
+            <div>
+              <h3>Visual narration timeline</h3>
+              <p>Sentence-level blocks are real render inputs. Drag a block to move narration, pull either edge to change its timing window, or type exact start and end values.</p>
+            </div>
+            <div class="mini-timeline">
+              <div class="mini-wave"></div>
+              <span class="mini-clip a">01 · Intro</span>
+              <span class="mini-clip b">02 · Punchline</span>
+              <i></i>
+            </div>
+          </article>
+
+          <article class="feature">
+            <div class="feature-number">02</div>
+            <h3>Source waveform</h3>
+            <p>FFmpeg extracts a lightweight local waveform so narration can be placed around source-audio beats and quiet gaps.</p>
+          </article>
+
+          <article class="feature">
+            <div class="feature-number">03</div>
+            <h3>Smart ducking</h3>
+            <p>Source audio drops only while narration is speaking, using sidechain compression instead of lowering the whole clip.</p>
+          </article>
+
+          <article class="feature">
+            <div class="feature-number">04</div>
+            <h3>Synchronized subtitles</h3>
+            <p>Subtitle timing comes from the exact same narration timeline, then burns into the final H.264 render.</p>
+          </article>
+
+          <article class="feature">
+            <div class="feature-number">05</div>
+            <h3>Persistent projects</h3>
+            <p>Save native <code>.vmagic</code> projects with source, script, voice settings and manual timeline positions.</p>
+          </article>
+
+          <article class="feature">
+            <div class="feature-number">06</div>
+            <h3>Warm local AI</h3>
+            <p>The local worker stays alive between previews and renders so repeated voice generation does not reload the model every time.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section shell local-section" id="local">
+      <div class="section-intro">
+        <span class="section-kicker">LOCAL-FIRST ARCHITECTURE</span>
+        <h2>The heavy work happens on your machine.</h2>
+        <p>VideoMagic separates the desktop UI from the local AI/media engine so voices and render capabilities can evolve without rewriting the product.</p>
+      </div>
+
+      <div class="architecture">
+        <div class="arch-card"><small>DESKTOP</small><strong>React + TypeScript</strong><span>Creator workspace</span></div>
+        <i>→</i>
+        <div class="arch-card"><small>NATIVE BRIDGE</small><strong>Tauri 2 + Rust</strong><span>Files, jobs, permissions</span></div>
+        <i>→</i>
+        <div class="arch-card"><small>LOCAL ENGINE</small><strong>Python 3.11</strong><span>Persistent worker</span></div>
+        <i>→</i>
+        <div class="arch-stack">
+          <div><strong>Kokoro</strong><span>Mandarin TTS</span></div>
+          <div><strong>FFmpeg</strong><span>Waveform · mix · subtitles · export</span></div>
+        </div>
+      </div>
+
+      <div class="local-notes">
+        <article><strong>Your source file</strong><span>remains on the PC during the core voiceover workflow.</span></article>
+        <article><strong>Large AI data</strong><span>can live on a drive you choose instead of filling the system disk.</span></article>
+        <article><strong>GPU acceleration</strong><span>prefers NVIDIA CUDA/NVENC when available and can fall back to CPU.</span></article>
+      </div>
+    </section>
+
+    <section class="section shell" id="download">
+      <div class="download-panel">
+        <div>
+          <span class="section-kicker">DOWNLOAD</span>
+          <h2>VideoMagic for Windows</h2>
+          <p>
+            Small desktop installer. On first run, choose where the local Python runtime,
+            AI model cache and FFmpeg should live.
+          </p>
+          <div class="requirements">
+            <span>Windows 10/11 x64</span>
+            <span>NVIDIA GPU recommended</span>
+            <span>CPU fallback available</span>
+          </div>
+        </div>
+        <div class="download-actions">
+          <a class="button primary big download-link" href="https://github.com/yaohuangguan/video-magic-ai/releases/latest/download/VideoMagic-Windows-x64-setup.exe">
+            Download installer
+            <small class="release-label">Latest release</small>
+          </a>
+          <a class="release-page" href="https://github.com/yaohuangguan/video-magic-ai/releases/latest">Release notes &amp; checksums ↗</a>
+          <p class="unsigned-note">Current public builds are unsigned. Windows SmartScreen may show a warning.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section shell status-section">
+      <div class="section-intro compact">
+        <span class="section-kicker">CURRENT STATUS</span>
+        <h2>Windows-first V0.1, actively evolving.</h2>
+      </div>
+      <div class="status-grid">
+        <div><strong>Working now</strong><p>Local Mandarin TTS, auto/manual timing, timeline waveform, resize handles, subtitles, ducking, CUDA/CPU selection, render history and project files.</p></div>
+        <div><strong>Next</strong><p>Per-segment audio caching, stronger/custom voices, clean-machine validation, code signing and updater hardening.</p></div>
+        <div><strong>Not pretending yet</strong><p>This is not a full Premiere replacement and it is not a cloud collaboration suite. The focus is fast local AI commentary creation.</p></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="shell">
+    <div class="brand footer-brand">
+      <img src="./icon.png" alt="" />
+      <span>VideoMagic</span>
+    </div>
+    <p>Local AI voiceover studio.</p>
+    <div>
+      <a href="https://github.com/yaohuangguan/video-magic-ai">GitHub</a>
+      <a href="https://github.com/yaohuangguan/video-magic-ai/releases">Releases</a>
+      <a href="https://github.com/yaohuangguan/video-magic-ai/blob/main/ROADMAP.md">Roadmap</a>
+    </div>
+  </footer>
+
+  <script src="./app.js"></script>
+</body>
+</html>
