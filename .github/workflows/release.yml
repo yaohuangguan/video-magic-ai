@@ -1,0 +1,125 @@
+name: Release Windows
+
+on:
+  workflow_run:
+    workflows:
+      - Windows CI
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Tag and publish Windows release
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 12.6.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Calculate next patch version
+        id: version
+        shell: pwsh
+        run: |
+          git fetch --tags --force
+          $latest = git tag --list "v*" --sort=-v:refname | Select-Object -First 1
+
+          if (-not $latest) {
+            $major = 0
+            $minor = 1
+            $patch = 0
+          } elseif ($latest -match '^v(\d+)\.(\d+)\.(\d+)$') {
+            $major = [int]$Matches[1]
+            $minor = [int]$Matches[2]
+            $patch = [int]$Matches[3]
+          } else {
+            throw "Latest tag '$latest' is not a supported semantic version."
+          }
+
+          $patch += 1
+          $version = "$major.$minor.$patch"
+          $tag = "v$version"
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          Write-Host "Next release: $tag"
+
+      - name: Stamp build version
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $package = Get-Content package.json -Raw | ConvertFrom-Json
+          $package.version = $env:RELEASE_VERSION
+          $package | ConvertTo-Json -Depth 20 | Set-Content package.json
+
+          $tauri = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $tauri.version = $env:RELEASE_VERSION
+          $tauri | ConvertTo-Json -Depth 20 | Set-Content src-tauri/tauri.conf.json
+
+          $cargo = Get-Content src-tauri/Cargo.toml -Raw
+          $cargo = $cargo -replace '(?m)^version = "[^"]+"', ('version = "' + $env:RELEASE_VERSION + '"')
+          Set-Content src-tauri/Cargo.toml $cargo
+
+      - name: Build NSIS installer
+        run: pnpm tauri build --bundles nsis
+
+      - name: Prepare stable release assets
+        id: assets
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem "src-tauri/target/release/bundle/nsis/*.exe" | Select-Object -First 1
+          if (-not $installer) {
+            throw "NSIS installer was not produced."
+          }
+
+          $stableName = "VideoMagic-Windows-x64-setup.exe"
+          Copy-Item $installer.FullName $stableName -Force
+
+          $hash = (Get-FileHash $stableName -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $stableName" | Set-Content "$stableName.sha256"
+
+          "installer=$stableName" >> $env:GITHUB_OUTPUT
+          "checksum=$stableName.sha256" >> $env:GITHUB_OUTPUT
+
+      - name: Publish GitHub Release and tag
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          INSTALLER: ${{ steps.assets.outputs.installer }}
+          CHECKSUM: ${{ steps.assets.outputs.checksum }}
+        run: gh release create $env:RELEASE_TAG $env:INSTALLER $env:CHECKSUM --repo $env:GITHUB_REPOSITORY --target $env:RELEASE_SHA --title "VideoMagic $env:RELEASE_TAG" --generate-notes --latest

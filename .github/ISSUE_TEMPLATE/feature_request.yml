@@ -1,0 +1,43 @@
+name: Feature request
+description: Propose a focused improvement to the VideoMagic creator workflow.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What creator problem should this solve?
+      placeholder: "When timing narration against a clip, I currently have to..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed workflow
+      description: Describe the interaction or output you want, not just the implementation.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Timeline / editing
+        - Voice / TTS
+        - Rendering / FFmpeg
+        - Subtitles
+        - Runtime / installer
+        - Projects / history
+        - Website / documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or references
+      description: Optional. Link similar workflows or explain what you use today.

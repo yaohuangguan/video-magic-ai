@@ -2,6 +2,13 @@
 
 Local-first AI commentary studio for turning a source video and narration script into a finished voiceover video.
 
+[Website](https://yaohuangguan.github.io/video-magic-ai/) · [Download Windows](https://github.com/yaohuangguan/video-magic-ai/releases/latest/download/VideoMagic-Windows-x64-setup.exe) · [Releases](https://github.com/yaohuangguan/video-magic-ai/releases) · [Roadmap](ROADMAP.md)
+
+![Windows CI](https://github.com/yaohuangguan/video-magic-ai/actions/workflows/windows-ci.yml/badge.svg)
+![Latest Release](https://img.shields.io/github/v/release/yaohuangguan/video-magic-ai?display_name=tag)
+
+> Windows-first V0.1. The core workflow keeps source video and AI rendering on your own PC. Public installers are currently unsigned, so Windows SmartScreen may show a warning.
+
 ## V0.1 — Windows first
 
 Current working flow:
@@ -119,16 +126,15 @@ Local virtual environments, model caches, render outputs, and Cargo targets are 
 videomagic/
 ├── src/                       React UI
 ├── src-tauri/                 Tauri / Rust desktop bridge
-├── engine/
-│   ├── pyproject.toml
-│   └── videomagic_engine/
-│       ├── main.py
-│       ├── media.py
-│       ├── subtitles.py
-│       ├── tts.py
-│       └── voices.py
-└── docs/
-    └── engine-protocol.md
+├── engine/                    Local Python AI/media engine
+├── site/                      GitHub Pages product website
+├── scripts/                   Runtime bootstrap scripts
+├── docs/
+│   ├── engine-protocol.md
+│   └── releasing.md
+└── .github/
+    ├── workflows/             CI, Pages and automatic releases
+    └── ISSUE_TEMPLATE/
 ```
 
 ## Development
@@ -144,7 +150,9 @@ Windows desktop development also requires Rust, MSVC Build Tools, the Windows SD
 
 The local Python engine currently uses a project venv during development. This is intentionally not committed.
 
-A manual **Windows Package** GitHub Actions workflow builds the unsigned NSIS installer on `windows-latest` and uploads it as a downloadable workflow artifact. Public distribution still needs Windows code signing and updater hardening.
+Pull requests and main-branch pushes run **Windows CI**. After a successful CI run on `main`, **Release Windows** automatically calculates the next patch version, builds the NSIS installer, creates the Git tag and GitHub Release, and uploads a stable installer name plus its SHA-256 checksum.
+
+The product website in `site/` is deployed by **Deploy Website** to GitHub Pages. See [docs/releasing.md](docs/releasing.md) for the release path. Public distribution still needs Windows code signing and updater hardening.
 
 ## First-run runtime bootstrap
 
