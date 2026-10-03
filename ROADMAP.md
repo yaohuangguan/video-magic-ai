@@ -1,33 +1,45 @@
 # VideoMagic V0.1 roadmap
 
 ## Milestone 1 — Windows shell
-- Tauri 2 app runs on Windows 10/11.
-- NSIS installer builds successfully.
-- Drag/select a local video.
-- Engine doctor screen reports FFmpeg, GPU and TTS readiness.
+- [x] Tauri 2 app builds on Windows.
+- [x] NSIS installer builds successfully.
+- [x] Local video picker.
+- [x] React UI for script, voice, speed, and source-audio level.
+- [x] Rust -> Python local engine bridge.
 
 ## Milestone 2 — First real narration
-- Bundle FFmpeg/FFprobe.
-- Package Python 3.11 engine as a Windows sidecar.
-- Load one GPT-SoVITS voice preset locally.
-- Script to WAV works without cloud APIs.
+- [x] Python 3.11 local engine.
+- [x] CUDA PyTorch on RTX 2080 SUPER.
+- [x] Kokoro Mandarin fixed voices.
+- [x] Mandarin script -> WAV without a cloud TTS API.
+- [x] Model/cache paths moved off C drive on the dev PC.
+- [ ] Standalone runtime bootstrap for a clean Windows machine.
+- [ ] GPT-SoVITS adapter for custom voice cloning / stronger style voices.
 
 ## Milestone 3 — Video render
-- Probe source duration.
-- Split narration into segments.
-- Basic automatic timing and speech-rate fitting.
-- Duck source audio under narration.
-- Render final H.264/AAC MP4.
+- [x] Probe video duration and streams.
+- [x] Mix narration with source audio.
+- [x] Adjustable original-audio level.
+- [x] Render a finished H.264/AAC MP4.
+- [x] Real end-to-end Windows render test.
+- [ ] Sentence segmentation and timeline planner.
+- [ ] Automatic speech-rate fitting.
+- [ ] Audio ducking that follows narration activity instead of one global volume.
 
-## Milestone 4 — Useful creator experience
-- Subtitle generation and burn-in.
-- Render progress and cancel.
-- Output folder selection.
-- Preset management.
-- Error recovery and hardware fallback.
+## Milestone 4 — Creator experience
+- [ ] Progress events surfaced live in the UI.
+- [ ] Render cancel.
+- [ ] Output-folder selection.
+- [ ] Subtitle generation and burn-in.
+- [ ] Voice preview before render.
+- [ ] Preset management.
+- [ ] Hardware fallback / CPU mode.
+- [ ] First-run model/runtime download UI.
 
-## Not in V0.1
-- Full nonlinear timeline editor.
-- Cloud rendering.
-- Automatic video understanding / script writing.
-- Publishing integrations.
+## Later
+- [ ] GPT-SoVITS custom voices.
+- [ ] Dialect / character-style presets.
+- [ ] Automatic video understanding and script writing.
+- [ ] Full timeline editor.
+- [ ] Cloud rendering option.
+- [ ] Publishing integrations.

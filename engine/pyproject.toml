@@ -1,9 +1,14 @@
 [project]
 name = "videomagic-engine"
 version = "0.1.0"
-description = "Local inference and media engine for VideoMagic"
+description = "Local AI narration and media engine for VideoMagic"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+  "kokoro>=0.9.4",
+  "misaki[zh]",
+  "numpy>=1.26",
+  "soundfile>=0.12"
+]
 
 [project.scripts]
 videomagic-engine = "videomagic_engine.main:main"
