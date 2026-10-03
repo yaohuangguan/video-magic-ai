@@ -51,6 +51,28 @@ type RuntimeStatus = {
   message?: string;
 };
 
+type RuntimeDiagnostics = {
+  appVersion: string;
+  platform: string;
+  arch: string;
+  runtime: RuntimeStatus;
+  engine?: {
+    engineVersion?: string;
+    python?: string;
+    ffmpeg?: string | null;
+    ffprobe?: string | null;
+    kokoroInstalled?: boolean;
+    videomagicHome?: string | null;
+    error?: string;
+    gpu?: {
+      cudaAvailable?: boolean;
+      device?: string | null;
+      torchVersion?: string;
+      error?: string;
+    };
+  } | null;
+};
+
 type TaskProgress = {
   stage: string;
   progress: number;
@@ -172,6 +194,10 @@ function App() {
   const [showPresetForm, setShowPresetForm] = useState(false);
   const [presetName, setPresetName] = useState("");
   const [deviceMode, setDeviceMode] = useState<InferenceMode>("auto");
+  const [showSettings, setShowSettings] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<RuntimeDiagnostics | null>(null);
+  const [isLoadingDiagnostics, setIsLoadingDiagnostics] = useState(false);
+  const [diagnosticsCopied, setDiagnosticsCopied] = useState(false);
 
   const previewAudio = useRef<HTMLAudioElement | null>(null);
   const projectHydrated = useRef(false);
@@ -199,6 +225,48 @@ function App() {
         configured: false,
         message: error instanceof Error ? error.message : String(error),
       });
+    }
+  }
+
+  async function refreshDiagnostics() {
+    setIsLoadingDiagnostics(true);
+    try {
+      const result = await invoke<RuntimeDiagnostics>("runtime_diagnostics");
+      setDiagnostics(result);
+    } catch (error) {
+      setDiagnostics({
+        appVersion: "0.1.0",
+        platform: "unknown",
+        arch: "unknown",
+        runtime: runtime ?? {
+          ready: false,
+          portableReady: false,
+          developmentReady: false,
+          configured: false,
+        },
+        engine: {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    } finally {
+      setIsLoadingDiagnostics(false);
+    }
+  }
+
+  async function openSettings() {
+    setShowSettings(true);
+    setDiagnosticsCopied(false);
+    await refreshDiagnostics();
+  }
+
+  async function copyDiagnostics() {
+    if (!diagnostics) return;
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2));
+      setDiagnosticsCopied(true);
+      window.setTimeout(() => setDiagnosticsCopied(false), 1800);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -790,6 +858,14 @@ function App() {
             Recent
           </button>
           <button
+            className="topbar-button"
+            type="button"
+            onClick={() => void openSettings()}
+            title="Settings and diagnostics"
+          >
+            Settings
+          </button>
+          <button
             className="topbar-button emphasis"
             type="button"
             disabled={isGenerating}
@@ -1270,6 +1346,181 @@ function App() {
           </section>
         </aside>
       </section>
+
+      {showSettings && (
+        <div className="modal-backdrop" onMouseDown={() => setShowSettings(false)}>
+          <section className="settings-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <span className="runtime-kicker">VIDEOMAGIC DESKTOP</span>
+                <h2>Settings & diagnostics</h2>
+                <p>Runtime health, hardware selection and local installation details.</p>
+              </div>
+              <button
+                className="icon-button"
+                type="button"
+                aria-label="Close settings"
+                onClick={() => setShowSettings(false)}
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="settings-content">
+              <section className="settings-section">
+                <div className="settings-section-title">
+                  <div>
+                    <strong>Application</strong>
+                    <span>Installed desktop build</span>
+                  </div>
+                  <button
+                    className="text-button"
+                    type="button"
+                    disabled={isLoadingDiagnostics}
+                    onClick={() => void refreshDiagnostics()}
+                  >
+                    {isLoadingDiagnostics ? "Checking…" : "Refresh"}
+                  </button>
+                </div>
+
+                <div className="diagnostic-grid">
+                  <div><span>Version</span><strong>{diagnostics?.appVersion ?? "—"}</strong></div>
+                  <div><span>Platform</span><strong>{diagnostics ? diagnostics.platform + " · " + diagnostics.arch : "—"}</strong></div>
+                  <div><span>Engine</span><strong>{diagnostics?.engine?.engineVersion ?? "—"}</strong></div>
+                  <div><span>Python</span><strong>{diagnostics?.engine?.python ?? "—"}</strong></div>
+                </div>
+              </section>
+
+              <section className="settings-section">
+                <div className="settings-section-title">
+                  <div>
+                    <strong>AI runtime</strong>
+                    <span>{runtime?.ready ? "Healthy and ready for local rendering." : "Runtime requires attention."}</span>
+                  </div>
+                  <span className={"health-badge " + (runtime?.ready ? "healthy" : "warning")}>
+                    {runtime?.ready ? "Healthy" : "Attention"}
+                  </span>
+                </div>
+
+                <div className="settings-path">
+                  <span>Data location</span>
+                  <code>{runtime?.dataDir ?? "Not configured"}</code>
+                </div>
+
+                <div className="settings-actions">
+                  {runtime?.dataDir && (
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={() => void openPath(runtime.dataDir as string)}
+                    >
+                      Open data folder
+                    </button>
+                  )}
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={isBootstrapping || !runtime?.dataDir}
+                    onClick={() => void setupRuntime(true)}
+                  >
+                    {isBootstrapping ? "Repairing…" : "Verify / repair"}
+                  </button>
+                </div>
+              </section>
+
+              <section className="settings-section">
+                <div className="settings-section-title">
+                  <div>
+                    <strong>Inference hardware</strong>
+                    <span>Auto uses CUDA when available and falls back to CPU on failure.</span>
+                  </div>
+                </div>
+                <div className="segmented-control settings-segmented">
+                  {(["auto", "cuda", "cpu"] as InferenceMode[]).map((mode) => (
+                    <button
+                      type="button"
+                      key={mode}
+                      className={deviceMode === mode ? "selected" : ""}
+                      onClick={() => setDeviceMode(mode)}
+                    >
+                      {mode === "auto" ? "Auto" : mode === "cuda" ? "NVIDIA GPU" : "CPU"}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="diagnostic-grid hardware-grid">
+                  <div>
+                    <span>CUDA</span>
+                    <strong>{diagnostics?.engine?.gpu?.cudaAvailable ? "Available" : "Not available"}</strong>
+                  </div>
+                  <div>
+                    <span>GPU</span>
+                    <strong>{diagnostics?.engine?.gpu?.device ?? "—"}</strong>
+                  </div>
+                  <div>
+                    <span>PyTorch</span>
+                    <strong>{diagnostics?.engine?.gpu?.torchVersion ?? "—"}</strong>
+                  </div>
+                  <div>
+                    <span>Kokoro</span>
+                    <strong>{diagnostics?.engine?.kokoroInstalled ? "Installed" : "Not detected"}</strong>
+                  </div>
+                </div>
+              </section>
+
+              <section className="settings-section">
+                <div className="settings-section-title">
+                  <div>
+                    <strong>Media engine</strong>
+                    <span>App-local FFmpeg is used for probing, mixing, subtitles and export.</span>
+                  </div>
+                </div>
+                <div className="settings-path compact">
+                  <span>FFmpeg</span>
+                  <code>{diagnostics?.engine?.ffmpeg ?? "—"}</code>
+                </div>
+                <div className="settings-path compact">
+                  <span>FFprobe</span>
+                  <code>{diagnostics?.engine?.ffprobe ?? "—"}</code>
+                </div>
+              </section>
+
+              <section className="settings-section">
+                <div className="settings-section-title">
+                  <div>
+                    <strong>Keyboard shortcuts</strong>
+                    <span>Desktop-first project workflow</span>
+                  </div>
+                </div>
+                <div className="shortcut-grid">
+                  <div><span>New project</span><kbd>Ctrl + Shift + N</kbd></div>
+                  <div><span>Open project</span><kbd>Ctrl + O</kbd></div>
+                  <div><span>Save project</span><kbd>Ctrl + S</kbd></div>
+                  <div><span>Import video</span><kbd>Ctrl + I</kbd></div>
+                  <div><span>Render</span><kbd>Ctrl + Enter</kbd></div>
+                  <div><span>Cancel render</span><kbd>Esc</kbd></div>
+                </div>
+              </section>
+
+              {diagnostics?.engine?.error && (
+                <section className="settings-error">
+                  <strong>Diagnostics error</strong>
+                  <code>{diagnostics.engine.error}</code>
+                </section>
+              )}
+            </div>
+
+            <div className="modal-footer">
+              <button className="text-button" type="button" onClick={() => void copyDiagnostics()}>
+                {diagnosticsCopied ? "Copied" : "Copy diagnostics"}
+              </button>
+              <button className="secondary-button" type="button" onClick={() => setShowSettings(false)}>
+                Done
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
 
       {showRecentProjects && (
         <div className="modal-backdrop" onMouseDown={() => setShowRecentProjects(false)}>
