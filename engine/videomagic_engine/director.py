@@ -60,7 +60,7 @@ def _load_model() -> tuple[Any, Any]:
     dtype = torch.float16 if torch.cuda.is_available() else torch.float32
     model = AutoModelForMultimodalLM.from_pretrained(
         selected_model,
-        torch_dtype=dtype,
+        dtype=dtype,
         device_map="auto",
         low_cpu_mem_usage=True,
     )
@@ -262,11 +262,20 @@ def plan_video_edit(
     source_duration = max(float(info["durationSeconds"]), 0.1)
     model, processor = _load_model()
 
+    from transformers.video_utils import load_video
+
+    frame_budget = min(64, max(16, int(round(source_duration * 2))))
+    video_frames, _video_metadata = load_video(
+        str(video),
+        num_frames=frame_budget,
+        backend="pyav",
+    )
+
     messages = [
         {
             "role": "user",
             "content": [
-                {"type": "video", "video": str(video)},
+                {"type": "video", "video": video_frames},
                 {
                     "type": "text",
                     "text": build_director_prompt(
