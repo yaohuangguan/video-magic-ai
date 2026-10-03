@@ -31,3 +31,16 @@ Minor/major release policy can be introduced once the V0.1 product boundary is s
 ## Manual release
 
 The Release Windows workflow also supports workflow_dispatch. Use this only when a release needs to be recreated intentionally; a manual run creates the next patch release.
+
+
+## Website
+
+The product website source lives in site/ and the production site is hosted on Cloudflare Pages:
+
+    https://videomagic.pages.dev/
+
+Deploy the current site from an authenticated Wrangler environment with:
+
+    wrangler pages deploy site --project-name videomagic --branch main
+
+The website intentionally uses the stable GitHub latest-release asset URL, so a new Windows release does not require a website edit.
