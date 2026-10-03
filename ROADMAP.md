@@ -24,20 +24,22 @@
 - [x] Adjustable original-audio level.
 - [x] Render a finished H.264/AAC MP4.
 - [x] Real end-to-end Windows render test.
-- [ ] Sentence segmentation and timeline planner.
-- [ ] Automatic speech-rate fitting.
-- [ ] Audio ducking that follows narration activity instead of one global volume.
+- [x] Mandarin sentence segmentation and automatic timeline planner.
+- [x] Automatic speech-rate fitting with a maximum-speed guard.
+- [x] Narration-aware smart ducking with FFmpeg sidechain compression.
 
 ## Milestone 4 — Creator experience
-- [ ] Progress events surfaced live in the UI.
-- [ ] Render cancel.
-- [ ] Output-folder selection.
-- [ ] Subtitle generation and burn-in.
-- [ ] Voice preview before render.
+- [x] Progress events surfaced live in the UI.
+- [x] Render cancel via process-tree termination.
+- [x] Output-folder selection.
+- [x] Voice preview before render.
+- [x] Live first-run setup-stage progress.
+- [x] First-run runtime setup UI with user-selected storage location.
+- [x] Synchronized SRT generation and burned-in subtitles.
 - [ ] Preset management.
 - [ ] Hardware fallback / CPU mode.
-- [x] First-run runtime setup UI with user-selected storage location.
-- [ ] Live setup-stage progress and retry/recovery UX.
+- [ ] Retry/recovery UX for interrupted setup.
+- [ ] Windows code signing and auto-update.
 
 ## Later
 - [ ] GPT-SoVITS custom voices.

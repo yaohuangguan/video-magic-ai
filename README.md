@@ -10,10 +10,14 @@ Current working flow:
 2. Paste a Mandarin commentary script.
 3. Pick a local voice preset.
 4. Generate speech locally with Kokoro.
-5. Lower and mix the source audio with FFmpeg.
-6. Export a finished H.264/AAC MP4.
+5. Split Mandarin scripts into sentence-level narration segments and fit them to the clip duration.
+6. Generate synchronized subtitles from the same narration timeline.
+7. Apply narration-aware source-audio ducking.
+8. Burn subtitles with GPU-accelerated H.264 when available.
+9. Stream render progress to the desktop UI and allow cancellation.
+10. Export a finished H.264/AAC MP4 to a user-selected folder.
 
-The source video never needs to be uploaded for the core workflow.
+The source video never needs to be uploaded for the core workflow. Voice presets can be previewed before rendering.
 
 ## Current implementation
 
@@ -52,9 +56,18 @@ Verified on the Windows development PC:
 - Tauri 2 release build and NSIS installer;
 - installer resources for bootstrap + Python engine;
 - Mandarin text -> WAV;
-- video + Mandarin script -> mixed MP4 using only the portable runtime.
+- video + Mandarin script -> mixed MP4 using only the portable runtime;
+- smart sidechain ducking;
+- render progress events;
+- cancellable render process tree;
+- local voice preview returned directly to the UI;
+- custom export-folder selection;
+- automatic narration timing and speed fitting;
+- synchronized SRT generation;
+- burned-in Chinese subtitles;
+- NVIDIA H.264 subtitle rendering when available.
 
-A real 12-second end-to-end render has been completed from the bootstrapped runtime without using the development venv or system FFmpeg.
+A real 12-second end-to-end render has been completed from the bootstrapped runtime without using the development venv or system FFmpeg. The smart-ducking and auto-timed subtitle paths have both been rendered successfully on Windows.
 
 ## Local storage
 
@@ -95,6 +108,7 @@ videomagic/
 │   └── videomagic_engine/
 │       ├── main.py
 │       ├── media.py
+│       ├── subtitles.py
 │       ├── tts.py
 │       └── voices.py
 └── docs/

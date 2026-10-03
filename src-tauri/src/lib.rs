@@ -1,10 +1,22 @@
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::{json, Value};
 use std::env;
 use std::fs;
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use tauri::{path::BaseDirectory, AppHandle, Manager};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
+use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager, State};
+
+#[derive(Clone, Default)]
+struct RenderTaskState {
+    pid: Arc<Mutex<Option<u32>>>,
+    cancel_requested: Arc<AtomicBool>,
+}
 
 #[cfg(debug_assertions)]
 fn dev_project_root() -> Result<PathBuf, String> {
@@ -135,6 +147,124 @@ fn command_available(name: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn ensure_runtime_dirs(local: &Path) -> Result<(), String> {
+    for relative in [
+        "cache/huggingface",
+        "cache/torch",
+        "cache/pycache",
+        "tmp",
+        "outputs",
+        "exports",
+        "previews",
+    ] {
+        fs::create_dir_all(local.join(relative))
+            .map_err(|error| format!("Failed to create local runtime directory: {error}"))?;
+    }
+    Ok(())
+}
+
+fn configured_engine_command(python: &Path, local: &Path) -> Command {
+    let ffmpeg_bin = local.join("tools").join("ffmpeg").join("bin");
+    let path_separator = if cfg!(target_os = "windows") { ";" } else { ":" };
+    let path_env = format!(
+        "{}{}{}",
+        ffmpeg_bin.display(),
+        path_separator,
+        env::var("PATH").unwrap_or_default()
+    );
+
+    let mut command = Command::new(python);
+    command
+        .args(["-m", "videomagic_engine.main"])
+        .env("VIDEOMAGIC_HOME", local)
+        .env("HF_HOME", local.join("cache").join("huggingface"))
+        .env("TORCH_HOME", local.join("cache").join("torch"))
+        .env("PYTHONPYCACHEPREFIX", local.join("cache").join("pycache"))
+        .env("TMP", local.join("tmp"))
+        .env("TEMP", local.join("tmp"))
+        .env("TMPDIR", local.join("tmp"))
+        .env("PATH", path_env);
+    command
+}
+
+fn final_engine_message(stdout: &str, stderr: &str) -> Result<Value, String> {
+    let mut final_message: Option<Value> = None;
+
+    for line in stdout.lines() {
+        if let Ok(value) = serde_json::from_str::<Value>(line) {
+            if matches!(
+                value.get("type").and_then(Value::as_str),
+                Some("result" | "error")
+            ) {
+                final_message = Some(value);
+            }
+        }
+    }
+
+    let message = final_message.ok_or_else(|| {
+        format!(
+            "Engine returned no result. stderr: {}",
+            stderr
+                .lines()
+                .rev()
+                .take(12)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    })?;
+
+    if message.get("type").and_then(Value::as_str) == Some("error") {
+        return Err(
+            message
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("Unknown engine error")
+                .to_string(),
+        );
+    }
+
+    Ok(message.get("result").cloned().unwrap_or(Value::Null))
+}
+
+fn run_engine_request(local: &Path, request: Value) -> Result<Value, String> {
+    ensure_runtime_dirs(local)?;
+    let python = engine_python(local)?;
+    if !python.exists() {
+        return Err(format!(
+            "Local engine Python not found: {}. Run local AI setup first.",
+            python.display()
+        ));
+    }
+
+    let mut child = configured_engine_command(&python, local)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Failed to start local engine: {error}"))?;
+
+    {
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| "Failed to open engine stdin".to_string())?;
+        writeln!(stdin, "{}", request)
+            .map_err(|error| format!("Failed to send engine request: {error}"))?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("Local engine failed: {error}"))?;
+
+    final_engine_message(
+        &String::from_utf8_lossy(&output.stdout),
+        &String::from_utf8_lossy(&output.stderr),
+    )
+}
+
 fn runtime_status_impl(app: &AppHandle) -> Result<Value, String> {
     let configured = configured_runtime_home(app)?;
     let Some(home) = configured else {
@@ -182,6 +312,31 @@ fn runtime_status(app: AppHandle) -> Result<Value, String> {
     runtime_status_impl(&app)
 }
 
+fn emit_runtime_progress(app: &AppHandle, line: &str) {
+    if let Some(rest) = line.strip_prefix("[VideoMagic][") {
+        if let Some((stage, message)) = rest.split_once("] ") {
+            let progress = match stage {
+                "uv" => 0.08,
+                "python" => 0.18,
+                "torch" => 0.38,
+                "engine" => 0.64,
+                "ffmpeg" => 0.84,
+                "verify" => 0.95,
+                "done" => 1.0,
+                _ => 0.02,
+            };
+            let _ = app.emit(
+                "videomagic://runtime-progress",
+                json!({
+                    "stage": stage,
+                    "progress": progress,
+                    "message": message
+                }),
+            );
+        }
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn bootstrap_runtime_sync(app: &AppHandle, data_dir: String) -> Result<Value, String> {
     let home = PathBuf::from(data_dir.trim());
@@ -208,13 +363,8 @@ fn bootstrap_runtime_sync(app: &AppHandle, data_dir: String) -> Result<Value, St
         return Err(format!("Bundled engine resource missing: {}", engine_dir.display()));
     }
 
-    let output = Command::new("powershell.exe")
-        .args([
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-        ])
+    let mut child = Command::new("powershell.exe")
+        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
         .arg(&script)
         .arg("-DataDir")
         .arg(&home)
@@ -222,24 +372,54 @@ fn bootstrap_runtime_sync(app: &AppHandle, data_dir: String) -> Result<Value, St
         .arg(&engine_dir)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .output()
+        .spawn()
         .map_err(|error| format!("Failed to start runtime setup: {error}"))?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "Failed to capture setup stderr".to_string())?;
+    let stderr_tail = Arc::new(Mutex::new(Vec::<String>::new()));
+    let stderr_tail_worker = Arc::clone(&stderr_tail);
+    let stderr_thread = std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            if let Ok(mut lines) = stderr_tail_worker.lock() {
+                lines.push(line);
+                if lines.len() > 40 {
+                    lines.remove(0);
+                }
+            }
+        }
+    });
 
-    if !output.status.success() {
-        let detail = stdout
-            .lines()
-            .chain(stderr.lines())
-            .rev()
-            .take(24)
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect::<Vec<_>>()
-            .join("\n");
-        return Err(format!("Runtime setup failed.\n{detail}"));
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Failed to capture setup stdout".to_string())?;
+    let mut stdout_tail = Vec::<String>::new();
+
+    for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+        emit_runtime_progress(app, &line);
+        stdout_tail.push(line);
+        if stdout_tail.len() > 60 {
+            stdout_tail.remove(0);
+        }
+    }
+
+    let status = child
+        .wait()
+        .map_err(|error| format!("Runtime setup process failed: {error}"))?;
+    let _ = stderr_thread.join();
+
+    if !status.success() {
+        let mut detail = stdout_tail;
+        if let Ok(lines) = stderr_tail.lock() {
+            detail.extend(lines.iter().cloned());
+        }
+        return Err(format!(
+            "Runtime setup failed.\n{}",
+            detail.into_iter().rev().take(30).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n")
+        ));
     }
 
     persist_runtime_home(app, &home)?;
@@ -265,18 +445,94 @@ async fn bootstrap_runtime(app: AppHandle, data_dir: String) -> Result<Value, St
 }
 
 #[tauri::command]
-fn render_video(
+async fn preview_voice(
     app: AppHandle,
+    voice: String,
+    speed: f64,
+    text: String,
+) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let local = configured_runtime_home(&app)?
+            .ok_or_else(|| "Local AI runtime is not configured.".to_string())?;
+        let preview_text = {
+            let clean = text.trim();
+            if clean.is_empty() {
+                "你好，这里是 VideoMagic。本地 AI 配音已经准备好了。".to_string()
+            } else {
+                clean.chars().take(88).collect::<String>()
+            }
+        };
+        let preview_path = local
+            .join("previews")
+            .join(format!("{voice}-preview.wav"));
+
+        let result = run_engine_request(
+            &local,
+            json!({
+                "id": "desktop-preview",
+                "method": "synthesize",
+                "params": {
+                    "text": preview_text,
+                    "voice": voice,
+                    "speed": speed,
+                    "outputPath": preview_path
+                }
+            }),
+        )?;
+
+        let path = result
+            .get("path")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "Preview did not return an audio path.".to_string())?;
+        let bytes = fs::read(path)
+            .map_err(|error| format!("Could not read preview audio: {error}"))?;
+        Ok(json!({
+            "audioDataUrl": format!("data:audio/wav;base64,{}", BASE64_STANDARD.encode(bytes)),
+            "meta": result
+        }))
+    })
+    .await
+    .map_err(|error| format!("Voice preview task failed: {error}"))?
+}
+
+fn make_output_path(local: &Path, video_path: &str, output_dir: Option<String>) -> Result<PathBuf, String> {
+    let target_dir = output_dir
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| local.join("exports"));
+    fs::create_dir_all(&target_dir)
+        .map_err(|error| format!("Could not create output directory: {error}"))?;
+
+    let stem = Path::new(video_path)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("video");
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("System clock error: {error}"))?
+        .as_secs();
+
+    Ok(target_dir.join(format!("{stem}-videomagic-{stamp}.mp4")))
+}
+
+fn render_video_sync(
+    app: AppHandle,
+    task_state: RenderTaskState,
     video_path: String,
     text: String,
     voice: String,
     speed: f64,
     original_volume: f64,
+    output_dir: Option<String>,
+    ducking: bool,
+    auto_timing: bool,
+    subtitles: bool,
 ) -> Result<Value, String> {
     let local = configured_runtime_home(&app)?
         .ok_or_else(|| "Local AI runtime is not configured. Run setup first.".to_string())?;
+    ensure_runtime_dirs(&local)?;
     let python = engine_python(&local)?;
-
     if !python.exists() {
         return Err(format!(
             "Local engine Python not found: {}. Run local AI setup first.",
@@ -284,18 +540,7 @@ fn render_video(
         ));
     }
 
-    for relative in [
-        "cache/huggingface",
-        "cache/torch",
-        "cache/pycache",
-        "tmp",
-        "outputs",
-        "exports",
-    ] {
-        fs::create_dir_all(local.join(relative))
-            .map_err(|error| format!("Failed to create local runtime directory: {error}"))?;
-    }
-
+    let output_path = make_output_path(&local, &video_path, output_dir)?;
     let request = json!({
         "id": "desktop-render",
         "method": "render",
@@ -304,33 +549,30 @@ fn render_video(
             "text": text,
             "voice": voice,
             "speed": speed,
-            "originalVolume": original_volume
+            "originalVolume": original_volume,
+            "ducking": ducking,
+            "autoTiming": auto_timing,
+            "subtitles": subtitles,
+            "outputPath": output_path
         }
     });
 
-    let ffmpeg_bin = local.join("tools").join("ffmpeg").join("bin");
-    let path_separator = if cfg!(target_os = "windows") { ";" } else { ":" };
-    let path_env = format!(
-        "{}{}{}",
-        ffmpeg_bin.display(),
-        path_separator,
-        env::var("PATH").unwrap_or_default()
-    );
+    task_state.cancel_requested.store(false, Ordering::SeqCst);
 
-    let mut child = Command::new(&python)
-        .args(["-m", "videomagic_engine.main"])
-        .env("VIDEOMAGIC_HOME", &local)
-        .env("HF_HOME", local.join("cache").join("huggingface"))
-        .env("TORCH_HOME", local.join("cache").join("torch"))
-        .env("PYTHONPYCACHEPREFIX", local.join("cache").join("pycache"))
-        .env("TMP", local.join("tmp"))
-        .env("TEMP", local.join("tmp"))
-        .env("PATH", path_env)
+    let mut child = configured_engine_command(&python, &local)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("Failed to start local engine: {error}"))?;
+
+    {
+        let mut slot = task_state
+            .pid
+            .lock()
+            .map_err(|_| "Render task state is unavailable.".to_string())?;
+        *slot = Some(child.id());
+    }
 
     {
         let stdin = child
@@ -341,40 +583,69 @@ fn render_video(
             .map_err(|error| format!("Failed to send render request: {error}"))?;
     }
 
-    let output = child
-        .wait_with_output()
-        .map_err(|error| format!("Local engine failed: {error}"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "Failed to capture engine stderr".to_string())?;
+    let stderr_tail = Arc::new(Mutex::new(Vec::<String>::new()));
+    let stderr_tail_worker = Arc::clone(&stderr_tail);
+    let stderr_thread = std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            if let Ok(mut lines) = stderr_tail_worker.lock() {
+                lines.push(line);
+                if lines.len() > 40 {
+                    lines.remove(0);
+                }
+            }
+        }
+    });
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Failed to capture engine stdout".to_string())?;
     let mut final_message: Option<Value> = None;
 
-    for line in stdout.lines() {
-        if let Ok(value) = serde_json::from_str::<Value>(line) {
-            if matches!(
-                value.get("type").and_then(Value::as_str),
-                Some("result" | "error")
-            ) {
-                final_message = Some(value);
+    for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+        if let Ok(value) = serde_json::from_str::<Value>(&line) {
+            match value.get("type").and_then(Value::as_str) {
+                Some("progress") => {
+                    if let Some(progress) = value.get("result") {
+                        let _ = app.emit("videomagic://render-progress", progress.clone());
+                    }
+                }
+                Some("result" | "error") => final_message = Some(value),
+                _ => {}
             }
         }
     }
 
-    let message = final_message.ok_or_else(|| {
-        format!(
-            "Engine returned no result. stderr: {}",
-            stderr
-                .lines()
-                .rev()
-                .take(8)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect::<Vec<_>>()
-                .join("\n")
-        )
-    })?;
+    let status = child
+        .wait()
+        .map_err(|error| format!("Local engine failed: {error}"))?;
+    let _ = stderr_thread.join();
 
+    if let Ok(mut slot) = task_state.pid.lock() {
+        *slot = None;
+    }
+
+    if task_state.cancel_requested.swap(false, Ordering::SeqCst) {
+        let _ = app.emit(
+            "videomagic://render-progress",
+            json!({"stage":"cancelled","progress":0.0,"message":"Render cancelled"}),
+        );
+        return Err("Render cancelled.".to_string());
+    }
+
+    if !status.success() && final_message.is_none() {
+        let detail = stderr_tail
+            .lock()
+            .map(|lines| lines.join("\n"))
+            .unwrap_or_default();
+        return Err(format!("Render process failed.\n{detail}"));
+    }
+
+    let message = final_message.ok_or_else(|| "Engine returned no final result.".to_string())?;
     if message.get("type").and_then(Value::as_str) == Some("error") {
         return Err(
             message
@@ -388,15 +659,87 @@ fn render_video(
     Ok(message.get("result").cloned().unwrap_or(Value::Null))
 }
 
+#[tauri::command]
+async fn render_video(
+    app: AppHandle,
+    state: State<'_, RenderTaskState>,
+    video_path: String,
+    text: String,
+    voice: String,
+    speed: f64,
+    original_volume: f64,
+    output_dir: Option<String>,
+    ducking: bool,
+    auto_timing: bool,
+    subtitles: bool,
+) -> Result<Value, String> {
+    let task_state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        render_video_sync(
+            app,
+            task_state,
+            video_path,
+            text,
+            voice,
+            speed,
+            original_volume,
+            output_dir,
+            ducking,
+            auto_timing,
+            subtitles,
+        )
+    })
+    .await
+    .map_err(|error| format!("Render task failed: {error}"))?
+}
+
+#[tauri::command]
+fn cancel_render(state: State<'_, RenderTaskState>) -> Result<bool, String> {
+    let pid = state
+        .pid
+        .lock()
+        .map_err(|_| "Render task state is unavailable.".to_string())?
+        .to_owned();
+
+    let Some(pid) = pid else {
+        return Ok(false);
+    };
+
+    state.cancel_requested.store(true, Ordering::SeqCst);
+
+    #[cfg(target_os = "windows")]
+    {
+        let status = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|error| format!("Failed to cancel render: {error}"))?;
+        return Ok(status.success());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let status = Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .status()
+            .map_err(|error| format!("Failed to cancel render: {error}"))?;
+        Ok(status.success())
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(RenderTaskState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             runtime_status,
             bootstrap_runtime,
-            render_video
+            preview_voice,
+            render_video,
+            cancel_render
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

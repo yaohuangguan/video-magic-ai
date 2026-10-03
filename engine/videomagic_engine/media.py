@@ -34,7 +34,7 @@ def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
 def probe_video(video_path: str | Path) -> dict[str, Any]:
     ffprobe = _media_tool("ffprobe")
     if not ffprobe:
-        raise RuntimeError("ffprobe was not found in PATH.")
+        raise RuntimeError("ffprobe was not found.")
 
     source = str(Path(video_path))
     completed = _run(
@@ -60,15 +60,69 @@ def probe_video(video_path: str | Path) -> dict[str, Any]:
     }
 
 
+def _subtitle_filter(path: str | Path) -> str:
+    normalized = Path(path).resolve().as_posix()
+    normalized = normalized.replace(":", r"\:")
+    normalized = normalized.replace("'", r"\'")
+    style = (
+        "FontName=Segoe UI,"
+        "FontSize=24,"
+        "PrimaryColour=&H00FFFFFF,"
+        "OutlineColour=&H00000000,"
+        "BorderStyle=1,"
+        "Outline=2,"
+        "Shadow=0,"
+        "Alignment=2,"
+        "MarginV=38"
+    )
+    return f"subtitles='{normalized}':force_style='{style}'"
+
+
+def _video_encoder_args(ffmpeg: str, burn_subtitles: bool) -> list[str]:
+    if not burn_subtitles:
+        return ["-c:v", "copy"]
+
+    has_nvidia = shutil.which("nvidia-smi") is not None
+    if has_nvidia:
+        try:
+            encoders = _run([ffmpeg, "-hide_banner", "-encoders"]).stdout
+            if "h264_nvenc" in encoders:
+                return [
+                    "-c:v",
+                    "h264_nvenc",
+                    "-preset",
+                    "p5",
+                    "-cq",
+                    "20",
+                    "-pix_fmt",
+                    "yuv420p",
+                ]
+        except Exception:
+            pass
+
+    return [
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-crf",
+        "20",
+        "-pix_fmt",
+        "yuv420p",
+    ]
+
+
 def mix_voiceover(
     video_path: str | Path,
     narration_path: str | Path,
     output_path: str | Path,
     original_volume: float = 0.24,
+    ducking: bool = True,
+    subtitle_path: str | Path | None = None,
 ) -> dict[str, Any]:
     ffmpeg = _media_tool("ffmpeg")
     if not ffmpeg:
-        raise RuntimeError("ffmpeg was not found in PATH.")
+        raise RuntimeError("ffmpeg was not found.")
 
     if not 0 <= original_volume <= 1:
         raise ValueError("original_volume must be between 0 and 1.")
@@ -80,66 +134,83 @@ def mix_voiceover(
 
     info = probe_video(video)
     duration = max(info["durationSeconds"], 0.01)
+    burn_subtitles = bool(subtitle_path)
+    video_args = _video_encoder_args(ffmpeg, burn_subtitles)
+
+    command = [
+        ffmpeg,
+        "-y",
+        "-i",
+        str(video),
+        "-i",
+        str(narration),
+    ]
+
+    if burn_subtitles:
+        command.extend(["-vf", _subtitle_filter(subtitle_path)])
 
     if info["hasAudio"]:
-        command = [
-            ffmpeg,
-            "-y",
-            "-i",
-            str(video),
-            "-i",
-            str(narration),
-            "-filter_complex",
-            (
-                f"[0:a]volume={original_volume}[bg];"
+        if ducking:
+            audio_filter = (
+                f"[0:a]volume={original_volume}[source];"
                 "[1:a]volume=1.0,apad[voice];"
-                "[bg][voice]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]"
-            ),
-            "-map",
-            "0:v:0",
-            "-map",
-            "[a]",
-            "-c:v",
-            "copy",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "192k",
-            "-movflags",
-            "+faststart",
-            str(output),
-        ]
+                "[source][voice]sidechaincompress="
+                "threshold=0.015:ratio=10:attack=15:release=320:makeup=1[ducked];"
+                "[ducked][voice]amix=inputs=2:duration=first:"
+                "dropout_transition=0:normalize=0[a]"
+            )
+        else:
+            audio_filter = (
+                f"[0:a]volume={original_volume}[source];"
+                "[1:a]volume=1.0,apad[voice];"
+                "[source][voice]amix=inputs=2:duration=first:"
+                "dropout_transition=0:normalize=0[a]"
+            )
+
+        command.extend(
+            [
+                "-filter_complex",
+                audio_filter,
+                "-map",
+                "0:v:0",
+                "-map",
+                "[a]",
+            ]
+        )
     else:
-        command = [
-            ffmpeg,
-            "-y",
-            "-i",
-            str(video),
-            "-i",
-            str(narration),
-            "-filter_complex",
-            "[1:a]apad[a]",
-            "-map",
-            "0:v:0",
-            "-map",
-            "[a]",
-            "-c:v",
-            "copy",
+        command.extend(
+            [
+                "-filter_complex",
+                "[1:a]apad[a]",
+                "-map",
+                "0:v:0",
+                "-map",
+                "[a]",
+                "-t",
+                f"{duration:.3f}",
+            ]
+        )
+
+    command.extend(video_args)
+    command.extend(
+        [
             "-c:a",
             "aac",
             "-b:a",
             "192k",
-            "-t",
-            f"{duration:.3f}",
             "-movflags",
             "+faststart",
             str(output),
         ]
+    )
 
     completed = _run(command)
     return {
         "path": str(output),
         "videoDurationSeconds": duration,
         "originalVolume": original_volume,
-        "ffmpegTail": completed.stderr.splitlines()[-10:],
+        "ducking": ducking,
+        "subtitlesBurned": burn_subtitles,
+        "videoEncoder": video_args[1] if len(video_args) > 1 else None,
+        "ffmpegTail": completed.stderr.splitlines()[-12:],
     }

@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
+import { openPath } from "@tauri-apps/plugin-opener";
 import "./app.css";
 
 type VoicePreset = {
@@ -12,7 +14,11 @@ type VoicePreset = {
 
 type RenderResult = {
   narrationPath?: string;
-  video?: { path?: string };
+  video?: {
+    path?: string;
+    videoDurationSeconds?: number;
+    ducking?: boolean;
+  };
 };
 
 type RuntimeStatus = {
@@ -24,19 +30,39 @@ type RuntimeStatus = {
   message?: string;
 };
 
+type TaskProgress = {
+  stage: string;
+  progress: number;
+  message: string;
+};
+
+type PreviewResult = {
+  audioDataUrl: string;
+  meta?: {
+    durationSeconds?: number;
+    device?: string;
+  };
+};
+
 const voices: VoicePreset[] = [
-  { id: "zm_009", name: "吐槽男声", description: "更有劲，适合节奏快的中文解说", tag: "Fast" },
-  { id: "zm_010", name: "故事男声", description: "自然男声，第一版默认中文旁白", tag: "Story" },
-  { id: "zm_011", name: "沉稳男声", description: "偏稳重，适合信息和纪录片内容", tag: "Deep" },
-  { id: "zf_001", name: "轻快女声", description: "清晰明亮，适合生活和短视频", tag: "Bright" },
+  { id: "zm_009", name: "Punchy Male", description: "Sharper pacing for commentary and short-form clips.", tag: "Fast" },
+  { id: "zm_010", name: "Story Male", description: "Natural Mandarin narration with a balanced tone.", tag: "Story" },
+  { id: "zm_011", name: "Deep Male", description: "Steadier voice for explainers and documentary content.", tag: "Deep" },
+  { id: "zf_001", name: "Bright Female", description: "Clear, lighter delivery for lifestyle and social clips.", tag: "Bright" },
 ];
 
 function fileName(path: string) {
   return path.split(/[\\/]/).pop() ?? path;
 }
 
+function parentDirectory(path: string) {
+  const parts = path.split(/[\\/]/);
+  parts.pop();
+  return parts.join("\\");
+}
+
 function dataDirectory(parent: string) {
-  return `${parent.replace(/[\\/]+$/, "")}\\VideoMagicData`;
+  return parent.replace(/[\\/]+$/, "") + "\\VideoMagicData";
 }
 
 function App() {
@@ -44,17 +70,25 @@ function App() {
   const [script, setScript] = useState("");
   const [voice, setVoice] = useState(voices[1].id);
   const [speed, setSpeed] = useState(1.05);
-  const [originalVolume, setOriginalVolume] = useState(24);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [isBootstrapping, setIsBootstrapping] = useState(false);
-  const [status, setStatus] = useState("Ready");
+  const [originalVolume, setOriginalVolume] = useState(42);
+  const [ducking, setDucking] = useState(true);
+  const [autoTiming, setAutoTiming] = useState(true);
+  const [subtitles, setSubtitles] = useState(true);
+  const [outputDir, setOutputDir] = useState("");
   const [outputPath, setOutputPath] = useState("");
   const [runtime, setRuntime] = useState<RuntimeStatus | null>(null);
 
-  const selectedVoice = useMemo(
-    () => voices.find((item) => item.id === voice) ?? voices[1],
-    [voice],
-  );
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [isBootstrapping, setIsBootstrapping] = useState(false);
+  const [isPreviewing, setIsPreviewing] = useState(false);
+
+  const [status, setStatus] = useState("Ready");
+  const [renderProgress, setRenderProgress] = useState(0);
+  const [renderStage, setRenderStage] = useState("idle");
+  const [runtimeProgress, setRuntimeProgress] = useState(0);
+  const [runtimeMessage, setRuntimeMessage] = useState("");
+
+  const previewAudio = useRef<HTMLAudioElement | null>(null);
 
   const canGenerate = Boolean(
     runtime?.ready &&
@@ -68,6 +102,9 @@ function App() {
     try {
       const result = await invoke<RuntimeStatus>("runtime_status");
       setRuntime(result);
+      if (result.dataDir && !outputDir) {
+        setOutputDir(result.dataDir + "\\exports");
+      }
     } catch (error) {
       setRuntime({
         ready: false,
@@ -81,26 +118,60 @@ function App() {
 
   useEffect(() => {
     void refreshRuntime();
+
+    let disposed = false;
+    const cleanups: Array<() => void> = [];
+
+    void listen<TaskProgress>("videomagic://render-progress", (event) => {
+      if (disposed) return;
+      setRenderStage(event.payload.stage);
+      setRenderProgress(event.payload.progress);
+      setStatus(event.payload.message);
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else cleanups.push(unlisten);
+    });
+
+    void listen<TaskProgress>("videomagic://runtime-progress", (event) => {
+      if (disposed) return;
+      setRuntimeProgress(event.payload.progress);
+      setRuntimeMessage(event.payload.message);
+      setStatus(event.payload.message);
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else cleanups.push(unlisten);
+    });
+
+    return () => {
+      disposed = true;
+      cleanups.forEach((cleanup) => cleanup());
+      previewAudio.current?.pause();
+    };
   }, []);
 
   async function setupRuntime() {
     const selected = await open({
       multiple: false,
       directory: true,
-      title: "Choose a drive or folder for VideoMagic AI data",
+      title: "Choose where VideoMagic AI data should live",
     });
 
     if (typeof selected !== "string") return;
 
     const target = dataDirectory(selected);
     setIsBootstrapping(true);
-    setStatus("Setting up local AI runtime. The first setup downloads several GB…");
+    setRuntimeProgress(0.02);
+    setRuntimeMessage("Preparing local AI runtime");
+    setStatus("Preparing local AI runtime");
 
     try {
       const result = await invoke<RuntimeStatus>("bootstrap_runtime", {
         dataDir: target,
       });
       setRuntime(result);
+      setOutputDir(target + "\\exports");
+      setRuntimeProgress(1);
+      setRuntimeMessage("Local AI runtime ready");
       setStatus("Local AI runtime ready");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
@@ -125,7 +196,59 @@ function App() {
     if (typeof selected === "string") {
       setVideoPath(selected);
       setOutputPath("");
+      setRenderProgress(0);
+      setRenderStage("idle");
       setStatus("Video ready");
+    }
+  }
+
+  async function chooseOutputDir() {
+    const selected = await open({
+      multiple: false,
+      directory: true,
+      title: "Choose export folder",
+    });
+
+    if (typeof selected === "string") {
+      setOutputDir(selected);
+    }
+  }
+
+  async function previewSelectedVoice() {
+    if (!runtime?.ready || isPreviewing) return;
+
+    previewAudio.current?.pause();
+    setIsPreviewing(true);
+    setStatus("Generating voice preview…");
+
+    try {
+      const result = await invoke<PreviewResult>("preview_voice", {
+        voice,
+        speed,
+        text: script.trim(),
+      });
+      const audio = new Audio(result.audioDataUrl);
+      previewAudio.current = audio;
+      audio.onended = () => setIsPreviewing(false);
+      audio.onerror = () => setIsPreviewing(false);
+      await audio.play();
+      setStatus(
+        result.meta?.device
+          ? "Preview playing on " + result.meta.device
+          : "Preview playing",
+      );
+    } catch (error) {
+      setIsPreviewing(false);
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function cancelRender() {
+    setStatus("Cancelling render…");
+    try {
+      await invoke<boolean>("cancel_render");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -134,7 +257,9 @@ function App() {
 
     setIsGenerating(true);
     setOutputPath("");
-    setStatus("Generating local narration and mixing video…");
+    setRenderProgress(0.02);
+    setRenderStage("starting");
+    setStatus("Starting local render…");
 
     try {
       const result = await invoke<RenderResult>("render_video", {
@@ -143,202 +268,390 @@ function App() {
         voice,
         speed,
         originalVolume: originalVolume / 100,
+        outputDir: outputDir || null,
+        ducking,
+        autoTiming,
+        subtitles,
       });
 
       const rendered = result.video?.path ?? "";
       setOutputPath(rendered);
+      setRenderProgress(1);
+      setRenderStage("done");
       setStatus(rendered ? "Video ready" : "Render completed");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.toLowerCase().includes("cancel")) {
+        setRenderStage("cancelled");
+        setRenderProgress(0);
+        setStatus("Render cancelled");
+      } else {
+        setRenderStage("error");
+        setStatus(message);
+      }
     } finally {
       setIsGenerating(false);
     }
   }
+
+  async function showOutput() {
+    if (outputPath) {
+      await openPath(parentDirectory(outputPath));
+      return;
+    }
+    if (outputDir) {
+      await openPath(outputDir);
+    }
+  }
+
+  const progressWidth = String(Math.max(0, Math.min(100, renderProgress * 100))) + "%";
+  const runtimeProgressWidth = String(Math.max(0, Math.min(100, runtimeProgress * 100))) + "%";
 
   return (
     <main className="app-shell">
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark">V</div>
-          <div>
+          <div className="brand-copy">
             <strong>VideoMagic</strong>
-            <span>Local AI commentary studio</span>
+            <span>Local AI voiceover studio</span>
           </div>
         </div>
-        <div className={`local-badge ${runtime?.ready ? "ready" : ""}`}>
-          <span />
-          {runtime?.ready ? "AI runtime ready" : "Local first"}
+
+        <div className="topbar-actions">
+          <div className={"runtime-pill " + (runtime?.ready ? "ready" : "")}>
+            <span className="status-dot" />
+            {runtime?.ready ? "Local AI ready" : "Runtime setup required"}
+          </div>
         </div>
       </header>
 
-      <section className="hero">
-        <p className="eyebrow">WINDOWS · V0.1</p>
-        <h1>Video in. Script in. Voiceover video out.</h1>
-        <p className="hero-copy">
-          VideoMagic generates Mandarin narration locally, lowers the source audio,
-          mixes the voiceover, and exports a finished MP4 without uploading your video.
-        </p>
+      <section className="project-header">
+        <div>
+          <span className="project-kicker">NEW PROJECT</span>
+          <h1>Create voiceover video</h1>
+          <p>Import a clip, write the narration, choose a voice, then render locally.</p>
+        </div>
+        <div className="privacy-note">
+          <strong>100% local core workflow</strong>
+          <span>Your source video stays on this PC.</span>
+        </div>
       </section>
 
-      <section className="workspace">
-        <div className="panel source-panel">
-          <div className="panel-heading">
-            <div>
-              <span className="step">01</span>
-              <h2>Video</h2>
+      <section className="studio-grid">
+        <div className="editor-column">
+          <section className="workspace-card media-card">
+            <div className="section-heading">
+              <div>
+                <span className="section-index">01</span>
+                <div>
+                  <h2>Source video</h2>
+                  <p>MP4, MOV, MKV, WEBM or M4V</p>
+                </div>
+              </div>
+              {videoPath && (
+                <button className="text-button" type="button" onClick={chooseVideo}>
+                  Replace
+                </button>
+              )}
             </div>
-            <span className="hint">MP4 · MOV · MKV · WEBM</span>
-          </div>
 
-          <button
-            className={`drop-zone ${videoPath ? "has-file" : ""}`}
-            type="button"
-            onClick={chooseVideo}
-          >
-            <div className="drop-icon">{videoPath ? "✓" : "＋"}</div>
-            {videoPath ? (
-              <>
-                <strong>{fileName(videoPath)}</strong>
-                <span>{videoPath}</span>
-              </>
-            ) : (
-              <>
-                <strong>Choose a video</strong>
-                <span>Pick a file from this Windows PC</span>
-              </>
-            )}
-          </button>
+            <button
+              className={"video-picker " + (videoPath ? "selected" : "")}
+              type="button"
+              onClick={chooseVideo}
+            >
+              <div className="video-picker-icon">{videoPath ? "✓" : "+"}</div>
+              <div className="video-picker-copy">
+                <strong>{videoPath ? fileName(videoPath) : "Choose a source video"}</strong>
+                <span>
+                  {videoPath
+                    ? videoPath
+                    : "VideoMagic reads and renders the file locally."}
+                </span>
+              </div>
+              <span className="picker-action">{videoPath ? "Selected" : "Browse"}</span>
+            </button>
+          </section>
 
-          <div className="panel-heading script-heading">
-            <div>
-              <span className="step">02</span>
-              <h2>Commentary script</h2>
+          <section className="workspace-card script-card">
+            <div className="section-heading">
+              <div>
+                <span className="section-index">02</span>
+                <div>
+                  <h2>Narration script</h2>
+                  <p>Write the voiceover exactly as you want it spoken.</p>
+                </div>
+              </div>
+              <span className="character-count">{script.length} chars</span>
             </div>
-            <span className="hint">{script.length} chars</span>
-          </div>
 
-          <textarea
-            value={script}
-            onChange={(event) => setScript(event.target.value)}
-            placeholder="比如：不是哥们，这猴子是真没拿自己当外人。上来先把游客的可乐抢了……"
-          />
+            <textarea
+              className="script-editor"
+              value={script}
+              onChange={(event) => setScript(event.target.value)}
+              placeholder="比如：不是哥们，这猴子是真的没拿自己当外人。上来先把游客的可乐抢了，结果下一秒更离谱……"
+            />
 
-          <div className="render-status">
-            <div>
-              <span>Status</span>
-              <strong>{status}</strong>
+            <div className="script-tools">
+              <span>Mandarin punctuation and natural pauses are supported.</span>
+              <button
+                className="preview-button"
+                type="button"
+                disabled={!runtime?.ready || isPreviewing}
+                onClick={previewSelectedVoice}
+              >
+                <span className="play-icon">{isPreviewing ? "■" : "▶"}</span>
+                {isPreviewing ? "Playing preview" : "Preview selected voice"}
+              </button>
             </div>
-            {outputPath && (
-              <div className="output-path">
-                <span>Output</span>
+          </section>
+
+          <section className="task-card">
+            <div className="task-summary">
+              <div className={"task-icon " + renderStage}>↗</div>
+              <div className="task-copy">
+                <div className="task-title-row">
+                  <strong>{status}</strong>
+                  <span>{Math.round(renderProgress * 100)}%</span>
+                </div>
+                <div className="progress-track">
+                  <div className="progress-fill" style={{ width: progressWidth }} />
+                </div>
+                <span className="task-stage">
+                  {renderStage === "idle"
+                    ? "Ready to render"
+                    : renderStage === "tts"
+                      ? "AI voice generation"
+                      : renderStage === "subtitles"
+                        ? "Building synchronized subtitles"
+                        : renderStage === "mix"
+                          ? "Audio ducking and final render"
+                          : renderStage === "probe"
+                            ? "Reading source video"
+                            : renderStage === "done"
+                          ? "Export complete"
+                          : renderStage}
+                </span>
+              </div>
+            </div>
+
+            <div className="task-actions">
+              {isGenerating ? (
+                <button className="secondary-button danger" type="button" onClick={cancelRender}>
+                  Cancel
+                </button>
+              ) : (
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={!canGenerate}
+                  onClick={generate}
+                >
+                  Generate video
+                  <span>→</span>
+                </button>
+              )}
+            </div>
+          </section>
+
+          {outputPath && (
+            <section className="output-card">
+              <div>
+                <span className="output-label">LATEST EXPORT</span>
+                <strong>{fileName(outputPath)}</strong>
                 <code>{outputPath}</code>
               </div>
-            )}
-          </div>
+              <button className="secondary-button" type="button" onClick={showOutput}>
+                Show in folder
+              </button>
+            </section>
+          )}
         </div>
 
-        <aside className="panel settings-panel">
-          <div className={`runtime-card ${runtime?.portableReady ? "runtime-ready" : ""}`}>
-            <div className="runtime-copy">
-              <span className="runtime-kicker">LOCAL AI</span>
-              <strong>
-                {runtime?.portableReady
-                  ? "Portable runtime ready"
-                  : runtime?.developmentReady
-                    ? "Development runtime ready"
-                    : "AI runtime setup required"}
-              </strong>
-              <small>
-                {runtime?.dataDir
-                  ? runtime.dataDir
-                  : "Choose where models, Python and FFmpeg should live."}
-              </small>
+        <aside className="inspector-column">
+          <section className={"runtime-card " + (runtime?.portableReady ? "ready" : "")}>
+            <div className="runtime-header">
+              <div>
+                <span className="runtime-kicker">LOCAL AI RUNTIME</span>
+                <strong>
+                  {runtime?.portableReady
+                    ? "Ready"
+                    : runtime?.developmentReady
+                      ? "Development runtime"
+                      : "Setup required"}
+                </strong>
+              </div>
+              <span className={"runtime-indicator " + (runtime?.ready ? "ready" : "")} />
             </div>
+
+            <p>
+              {runtime?.dataDir
+                ? runtime.dataDir
+                : "Choose a drive or folder for Python, models, cache and FFmpeg."}
+            </p>
+
+            {isBootstrapping && (
+              <div className="runtime-progress">
+                <div className="task-title-row">
+                  <span>{runtimeMessage || "Setting up local AI"}</span>
+                  <span>{Math.round(runtimeProgress * 100)}%</span>
+                </div>
+                <div className="progress-track">
+                  <div className="progress-fill" style={{ width: runtimeProgressWidth }} />
+                </div>
+              </div>
+            )}
+
             {!runtime?.portableReady && (
               <button
-                className="runtime-setup"
+                className="secondary-button full-width"
                 type="button"
                 disabled={isBootstrapping}
                 onClick={setupRuntime}
               >
-                {isBootstrapping ? "Setting up…" : "Set up runtime"}
+                {isBootstrapping ? "Installing local runtime…" : "Set up local runtime"}
               </button>
             )}
-          </div>
+          </section>
 
-          <div className="panel-heading">
-            <div>
-              <span className="step">03</span>
-              <h2>Voice & mix</h2>
-            </div>
-          </div>
-
-          <label className="field-label">Mandarin voice preset</label>
-          <div className="voice-grid">
-            {voices.map((item) => (
+          <section className="inspector-section">
+            <div className="inspector-heading">
+              <div>
+                <span className="section-index">03</span>
+                <h2>Voice</h2>
+              </div>
               <button
-                key={item.id}
-                className={`voice-card ${voice === item.id ? "selected" : ""}`}
-                onClick={() => setVoice(item.id)}
+                className="icon-button"
                 type="button"
+                title="Preview selected voice"
+                disabled={!runtime?.ready || isPreviewing}
+                onClick={previewSelectedVoice}
               >
-                <div>
-                  <strong>{item.name}</strong>
-                  <span>{item.description}</span>
-                </div>
-                <em>{item.tag}</em>
+                {isPreviewing ? "■" : "▶"}
               </button>
-            ))}
-          </div>
-
-          <div className="slider-row">
-            <div className="slider-copy">
-              <span>Voice speed</span>
-              <strong>{speed.toFixed(2)}×</strong>
             </div>
-            <input
-              type="range"
-              min="0.8"
-              max="1.3"
-              step="0.05"
-              value={speed}
-              onChange={(event) => setSpeed(Number(event.target.value))}
-            />
-          </div>
 
-          <div className="slider-row">
-            <div className="slider-copy">
-              <span>Original audio</span>
-              <strong>{originalVolume}%</strong>
+            <div className="voice-list">
+              {voices.map((item) => (
+                <button
+                  key={item.id}
+                  className={"voice-option " + (voice === item.id ? "selected" : "")}
+                  onClick={() => setVoice(item.id)}
+                  type="button"
+                >
+                  <div className="voice-avatar">{item.name.slice(0, 1)}</div>
+                  <div className="voice-copy">
+                    <strong>{item.name}</strong>
+                    <span>{item.description}</span>
+                  </div>
+                  <em>{item.tag}</em>
+                </button>
+              ))}
             </div>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={originalVolume}
-              onChange={(event) => setOriginalVolume(Number(event.target.value))}
-            />
-          </div>
+          </section>
 
-          <div className="next-features">
-            <div><span>Next</span><strong>Auto timing</strong></div>
-            <div><span>Next</span><strong>Auto subtitles</strong></div>
-            <div><span>Next</span><strong>Voice cloning / dialect styles</strong></div>
-          </div>
+          <section className="inspector-section">
+            <div className="inspector-heading">
+              <div>
+                <span className="section-index">04</span>
+                <h2>Mix</h2>
+              </div>
+            </div>
 
-          <div className="summary">
-            <span>Selected voice</span>
-            <strong>{selectedVoice.name}</strong>
-            <small>Kokoro Mandarin · local inference</small>
-          </div>
+            <div className="control-block">
+              <div className="control-label">
+                <span>Voice speed</span>
+                <strong>{speed.toFixed(2)}×</strong>
+              </div>
+              <input
+                type="range"
+                min="0.8"
+                max="1.3"
+                step="0.05"
+                value={speed}
+                onChange={(event) => setSpeed(Number(event.target.value))}
+              />
+            </div>
 
-          <button className="generate" disabled={!canGenerate} type="button" onClick={generate}>
-            {isGenerating ? "Generating…" : "Generate video"}
-            <span>{isGenerating ? "•••" : "→"}</span>
-          </button>
-          <p className="generate-note">
-            V0.1 uses Kokoro + FFmpeg locally. GPT-SoVITS is reserved for custom voice cloning and stronger style voices.
-          </p>
+            <div className="control-block">
+              <div className="control-label">
+                <span>Source audio level</span>
+                <strong>{originalVolume}%</strong>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={originalVolume}
+                onChange={(event) => setOriginalVolume(Number(event.target.value))}
+              />
+            </div>
+
+            <label className="switch-row">
+              <div>
+                <strong>Smart ducking</strong>
+                <span>Lower source audio only while narration is speaking.</span>
+              </div>
+              <input
+                type="checkbox"
+                checked={ducking}
+                onChange={(event) => setDucking(event.target.checked)}
+              />
+            </label>
+
+            <label className="switch-row">
+              <div>
+                <strong>Auto timing</strong>
+                <span>Split the script into sentences and spread narration across the clip.</span>
+              </div>
+              <input
+                type="checkbox"
+                checked={autoTiming}
+                onChange={(event) => setAutoTiming(event.target.checked)}
+              />
+            </label>
+
+            <label className="switch-row">
+              <div>
+                <strong>Burn subtitles</strong>
+                <span>Create synchronized captions from the same narration timeline.</span>
+              </div>
+              <input
+                type="checkbox"
+                checked={subtitles}
+                onChange={(event) => setSubtitles(event.target.checked)}
+              />
+            </label>
+          </section>
+
+          <section className="inspector-section">
+            <div className="inspector-heading">
+              <div>
+                <span className="section-index">05</span>
+                <h2>Export</h2>
+              </div>
+            </div>
+
+            <button className="folder-picker" type="button" onClick={chooseOutputDir}>
+              <div>
+                <span>Output folder</span>
+                <strong>{outputDir ? fileName(outputDir) : "Choose folder"}</strong>
+              </div>
+              <span>…</span>
+            </button>
+            {outputDir && <code className="folder-path">{outputDir}</code>}
+
+            <div className="export-specs">
+              <div><span>Container</span><strong>MP4</strong></div>
+              <div>
+                <span>Video</span>
+                <strong>{subtitles ? "H.264 · caption render" : "Source stream"}</strong>
+              </div>
+              <div><span>Audio</span><strong>AAC · 192 kbps</strong></div>
+              <div><span>Timing</span><strong>{autoTiming ? "Auto spread" : "Compact"}</strong></div>
+            </div>
+          </section>
         </aside>
       </section>
     </main>
