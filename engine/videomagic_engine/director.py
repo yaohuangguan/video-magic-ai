@@ -296,13 +296,14 @@ def plan_video_edit(
         add_generation_prompt=True,
         return_dict=True,
         return_tensors="pt",
-        downsample_mode=downsample_mode,
-        stack_frames=1,
-        max_slice_nums=1,
-        use_image_id=False,
         processor_kwargs={
             "videos_kwargs": {
                 "do_sample_frames": False,
+                "max_num_frames": frame_budget,
+                "stack_frames": 1,
+                "max_slice_nums": 1,
+                "downsample_mode": downsample_mode,
+                "use_image_id": False,
             }
         },
     ).to(model.device)
