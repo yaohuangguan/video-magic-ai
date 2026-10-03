@@ -72,6 +72,25 @@ def _load_model() -> tuple[Any, Any]:
     return model, processor
 
 
+def release_video_model() -> None:
+    global _model, _processor, _loaded_model_id
+
+    _model = None
+    _processor = None
+    _loaded_model_id = None
+
+    try:
+        import gc
+        import torch
+
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+    except Exception:
+        pass
+
+
 def _json_object(text: str) -> dict[str, Any]:
     clean = text.strip()
     if clean.startswith("```"):

@@ -52,6 +52,12 @@ jobs:
       - name: Compile Python engine
         run: python -m compileall -q engine/videomagic_engine
 
+      - name: Import Python engine entrypoint
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = Join-Path $PWD "engine"
+          python -c "import videomagic_engine.main; print('engine import ok')"
+
       - name: Check bootstrap PowerShell syntax
         shell: pwsh
         run: |
