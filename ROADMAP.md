@@ -39,10 +39,10 @@
 - [x] Project autosave / restore and drag-and-drop import.
 - [x] Native .vmagic project Open / Save / Save As workflow.
 - [x] Desktop keyboard shortcuts for project, import, render, and cancel actions.
-- [ ] Recent-projects browser.
-- [ ] Preset management.
-- [ ] Hardware fallback / CPU mode.
-- [ ] Retry/recovery UX for interrupted setup.
+- [x] Recent-projects browser backed by native app config.
+- [x] Reusable creator presets with built-in and custom profiles.
+- [x] Auto / GPU / CPU inference selection with Auto CUDA-to-CPU fallback.
+- [x] Repair-in-place runtime recovery using the existing data directory.
 - [ ] Windows code signing and auto-update.
 
 ## Later

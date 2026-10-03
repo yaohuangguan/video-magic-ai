@@ -47,36 +47,38 @@ def _configure_text_cache() -> None:
         pass
 
 
-def get_pipeline() -> tuple[Any, str]:
+def _load_pipeline(device: str) -> tuple[Any, str]:
     global _pipeline, _pipeline_device
 
-    forced = os.environ.get("VIDEOMAGIC_TTS_DEVICE", "").strip().lower()
-    device = _resolve_device()
     if _pipeline is not None and _pipeline_device == device:
         return _pipeline, device
 
     _configure_text_cache()
     from kokoro import KPipeline
 
-    try:
-        _pipeline = KPipeline(
-            lang_code="z",
-            repo_id=REPO_ID,
-            device=device,
-        )
-        _pipeline_device = device
-        return _pipeline, device
-    except Exception:
-        if device != "cuda" or forced == "cuda":
-            raise
+    _pipeline = KPipeline(
+        lang_code="z",
+        repo_id=REPO_ID,
+        device=device,
+    )
+    _pipeline_device = device
+    return _pipeline, device
 
-        _pipeline = KPipeline(
-            lang_code="z",
-            repo_id=REPO_ID,
-            device="cpu",
-        )
-        _pipeline_device = "cpu"
-        return _pipeline, "cpu"
+
+def _auto_fallback_allowed(device: str) -> bool:
+    forced = os.environ.get("VIDEOMAGIC_TTS_DEVICE", "").strip().lower()
+    return device == "cuda" and forced != "cuda"
+
+
+def get_pipeline() -> tuple[Any, str]:
+    device = _resolve_device()
+
+    try:
+        return _load_pipeline(device)
+    except Exception:
+        if not _auto_fallback_allowed(device):
+            raise
+        return _load_pipeline("cpu")
 
 
 def split_script(text: str) -> list[str]:
@@ -134,10 +136,19 @@ def synthesize(
     pipeline, device = get_pipeline()
     segments = split_script(clean_text)
 
-    generated = [
-        _generate_segment(pipeline, segment, voice=voice, speed=speed)
-        for segment in segments
-    ]
+    try:
+        generated = [
+            _generate_segment(pipeline, segment, voice=voice, speed=speed)
+            for segment in segments
+        ]
+    except Exception:
+        if not _auto_fallback_allowed(device):
+            raise
+        pipeline, device = _load_pipeline("cpu")
+        generated = [
+            _generate_segment(pipeline, segment, voice=voice, speed=speed)
+            for segment in segments
+        ]
     sentence_gap = np.zeros(int(SAMPLE_RATE * 0.10), dtype=np.float32)
     pieces: list[np.ndarray] = []
     timeline: list[dict[str, Any]] = []
@@ -188,10 +199,20 @@ def synthesize_timed(
     segments = split_script(clean_text)
 
     def generate(at_speed: float) -> list[np.ndarray]:
-        return [
-            _generate_segment(pipeline, segment, voice=voice, speed=at_speed)
-            for segment in segments
-        ]
+        nonlocal pipeline, device
+        try:
+            return [
+                _generate_segment(pipeline, segment, voice=voice, speed=at_speed)
+                for segment in segments
+            ]
+        except Exception:
+            if not _auto_fallback_allowed(device):
+                raise
+            pipeline, device = _load_pipeline("cpu")
+            return [
+                _generate_segment(pipeline, segment, voice=voice, speed=at_speed)
+                for segment in segments
+            ]
 
     effective_speed = speed
     generated = generate(effective_speed)

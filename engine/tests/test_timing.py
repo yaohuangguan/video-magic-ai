@@ -8,7 +8,7 @@ from unittest.mock import patch
 import numpy as np
 
 from videomagic_engine.subtitles import write_srt
-from videomagic_engine.tts import SAMPLE_RATE, split_script, synthesize_timed
+from videomagic_engine.tts import SAMPLE_RATE, split_script, synthesize, synthesize_timed
 
 
 class TimingTests(unittest.TestCase):
@@ -48,6 +48,33 @@ class TimingTests(unittest.TestCase):
                 result["timeline"][1]["start"],
                 result["timeline"][0]["end"],
             )
+
+    def test_auto_mode_falls_back_to_cpu_when_cuda_generation_fails(self) -> None:
+        gpu_pipeline = object()
+        cpu_pipeline = object()
+        fallback_audio = np.ones(int(SAMPLE_RATE * 0.5), dtype=np.float32) * 0.02
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "fallback.wav"
+            with (
+                patch.dict("os.environ", {"VIDEOMAGIC_TTS_DEVICE": ""}, clear=False),
+                patch("videomagic_engine.tts.get_pipeline", return_value=(gpu_pipeline, "cuda")),
+                patch("videomagic_engine.tts._load_pipeline", return_value=(cpu_pipeline, "cpu")) as load_pipeline,
+                patch(
+                    "videomagic_engine.tts._generate_segment",
+                    side_effect=[RuntimeError("CUDA out of memory"), fallback_audio],
+                ),
+            ):
+                result = synthesize(
+                    text="自动降级测试。",
+                    output_path=output,
+                    voice="zm_010",
+                    speed=1.0,
+                )
+
+            self.assertTrue(output.exists())
+            self.assertEqual(result["device"], "cpu")
+            load_pipeline.assert_called_once_with("cpu")
 
     def test_auto_timing_can_raise_effective_speed(self) -> None:
         def fake_segment(_pipeline, _text: str, voice: str, speed: float) -> np.ndarray:
