@@ -1041,6 +1041,39 @@ async fn probe_video_info(
 }
 
 #[tauri::command]
+async fn video_waveform(
+    app: AppHandle,
+    state: State<'_, EngineWorkerState>,
+    video_path: String,
+    points: Option<u32>,
+    device_mode: String,
+) -> Result<Value, String> {
+    let engine_state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let local = configured_runtime_home(&app)?
+            .ok_or_else(|| "Local AI runtime is not configured.".to_string())?;
+        run_persistent_engine_request(
+            None,
+            &engine_state,
+            None,
+            &local,
+            json!({
+                "id": "desktop-waveform",
+                "method": "waveform",
+                "params": {
+                    "videoPath": video_path,
+                    "points": points.unwrap_or(240)
+                }
+            }),
+            device_mode.as_str(),
+            None,
+        )
+    })
+    .await
+    .map_err(|error| format!("Waveform task failed: {error}"))?
+}
+
+#[tauri::command]
 async fn plan_narration_timeline(
     app: AppHandle,
     state: State<'_, EngineWorkerState>,
@@ -1327,6 +1360,7 @@ pub fn run() {
             bootstrap_runtime,
             allow_preview_file,
             probe_video_info,
+            video_waveform,
             plan_narration_timeline,
             preview_voice,
             render_video,

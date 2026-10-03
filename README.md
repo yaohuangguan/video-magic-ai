@@ -78,6 +78,8 @@ Verified on the Windows development PC:
 - secure Tauri asset-protocol video preview with per-selected-file runtime scope;
 - draggable sentence-level narration timeline persisted in `.vmagic` projects;
 - custom timeline rendering where narration audio is physically placed at edited start times;
+- source-audio waveform extraction rendered behind the narration track;
+- direct drag and left/right resize handles for narration timing windows;
 - persistent render history and reusable export settings;
 - persistent warm Kokoro worker across preview/render requests.
 

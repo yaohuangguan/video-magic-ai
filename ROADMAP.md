@@ -52,7 +52,8 @@
 - [x] Timeline persistence in autosave and native .vmagic project files.
 - [x] Persistent render history with reusable settings.
 - [x] Warm local AI worker across preview/render requests.
-- [ ] Waveform visualization and resize handles directly on timeline blocks.
+- [x] Source-audio waveform visualization behind the narration timeline.
+- [x] Left/right resize handles directly on narration blocks.
 - [ ] Per-segment cached regeneration without re-synthesizing unchanged segments.
 - [ ] Windows code signing and auto-update.
 

@@ -7,6 +7,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 
 def _media_tool(name: str) -> str | None:
     home = os.environ.get("VIDEOMAGIC_HOME")
@@ -29,6 +31,67 @@ def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
+
+
+def waveform_peaks(
+    video_path: str | Path,
+    points: int = 240,
+) -> dict[str, Any]:
+    ffmpeg = _media_tool("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg was not found.")
+
+    info = probe_video(video_path)
+    count = max(64, min(int(points), 800))
+    if not info["hasAudio"]:
+        return {
+            "peaks": [0.0] * count,
+            "points": count,
+            "durationSeconds": info["durationSeconds"],
+            "hasAudio": False,
+        }
+
+    command = [
+        ffmpeg,
+        "-v",
+        "error",
+        "-i",
+        str(Path(video_path)),
+        "-map",
+        "0:a:0",
+        "-ac",
+        "1",
+        "-ar",
+        "8000",
+        "-f",
+        "f32le",
+        "pipe:1",
+    ]
+    completed = subprocess.run(
+        command,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    samples = np.frombuffer(completed.stdout, dtype="<f4")
+    if samples.size == 0:
+        peaks = np.zeros(count, dtype=np.float32)
+    else:
+        chunks = np.array_split(np.abs(samples), count)
+        peaks = np.array(
+            [float(np.max(chunk)) if chunk.size else 0.0 for chunk in chunks],
+            dtype=np.float32,
+        )
+        ceiling = float(np.max(peaks)) if peaks.size else 0.0
+        if ceiling > 1e-6:
+            peaks = np.clip(peaks / ceiling, 0.0, 1.0)
+
+    return {
+        "peaks": [round(float(value), 4) for value in peaks],
+        "points": count,
+        "durationSeconds": info["durationSeconds"],
+        "hasAudio": True,
+    }
 
 
 def probe_video(video_path: str | Path) -> dict[str, Any]:
