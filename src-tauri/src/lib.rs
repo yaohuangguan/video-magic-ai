@@ -36,6 +36,108 @@ fn runtime_config_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("runtime-location.txt"))
 }
 
+fn render_history_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("Could not resolve app config directory: {error}"))?;
+    fs::create_dir_all(&dir)
+        .map_err(|error| format!("Could not create app config directory: {error}"))?;
+    Ok(dir.join("render-history.json"))
+}
+
+fn read_render_history(app: &AppHandle) -> Result<Vec<Value>, String> {
+    let path = render_history_path(app)?;
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let content = fs::read_to_string(&path)
+        .map_err(|error| format!("Could not read render history: {error}"))?;
+    serde_json::from_str::<Vec<Value>>(&content)
+        .map_err(|error| format!("Could not parse render history: {error}"))
+}
+
+fn write_render_history(app: &AppHandle, items: &[Value]) -> Result<(), String> {
+    let path = render_history_path(app)?;
+    let content = serde_json::to_string_pretty(items)
+        .map_err(|error| format!("Could not serialize render history: {error}"))?;
+    fs::write(path, content.as_bytes())
+        .map_err(|error| format!("Could not save render history: {error}"))
+}
+
+fn remember_render(
+    app: &AppHandle,
+    source_video: &str,
+    result: &Value,
+    voice: &str,
+    speed: f64,
+    original_volume: f64,
+    ducking: bool,
+    auto_timing: bool,
+    subtitles: bool,
+    device_mode: &str,
+) -> Result<(), String> {
+    let output_path = result
+        .get("video")
+        .and_then(|video| video.get("path"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
+    if output_path.is_empty() {
+        return Ok(());
+    }
+
+    let created_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("System clock error: {error}"))?
+        .as_secs();
+
+    let mut items = read_render_history(app)?;
+    items.retain(|item| {
+        item.get("path")
+            .and_then(Value::as_str)
+            .map(|value| value != output_path)
+            .unwrap_or(true)
+    });
+
+    items.insert(
+        0,
+        json!({
+            "id": format!("render-{created_at}"),
+            "path": output_path,
+            "name": Path::new(output_path)
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("VideoMagic export"),
+            "sourceVideo": source_video,
+            "createdAt": created_at,
+            "exists": Path::new(output_path).exists(),
+            "durationSeconds": result
+                .get("video")
+                .and_then(|video| video.get("videoDurationSeconds"))
+                .cloned()
+                .unwrap_or(Value::Null),
+            "voice": voice,
+            "speed": speed,
+            "originalVolume": original_volume,
+            "ducking": ducking,
+            "autoTiming": auto_timing,
+            "subtitles": subtitles,
+            "deviceMode": device_mode,
+            "narrationPath": result.get("narrationPath").cloned().unwrap_or(Value::Null),
+            "subtitlePath": result
+                .get("subtitles")
+                .and_then(|value| value.get("path"))
+                .cloned()
+                .unwrap_or(Value::Null)
+        }),
+    );
+
+    items.truncate(40);
+    write_render_history(app, &items)
+}
+
 fn recent_projects_path(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
@@ -421,6 +523,43 @@ fn runtime_diagnostics(app: AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command]
+fn render_history(app: AppHandle) -> Result<Vec<Value>, String> {
+    let items = read_render_history(&app)?;
+    Ok(items
+        .into_iter()
+        .map(|mut item| {
+            if let Some(path) = item.get("path").and_then(Value::as_str) {
+                let exists = Path::new(path).exists();
+                if let Some(object) = item.as_object_mut() {
+                    object.insert("exists".to_string(), json!(exists));
+                }
+            }
+            item
+        })
+        .collect())
+}
+
+#[tauri::command]
+fn remove_render_history(app: AppHandle, id: String) -> Result<bool, String> {
+    let mut items = read_render_history(&app)?;
+    let before = items.len();
+    items.retain(|item| {
+        item.get("id")
+            .and_then(Value::as_str)
+            .map(|value| value != id)
+            .unwrap_or(true)
+    });
+    write_render_history(&app, &items)?;
+    Ok(items.len() != before)
+}
+
+#[tauri::command]
+fn clear_render_history(app: AppHandle) -> Result<bool, String> {
+    write_render_history(&app, &[])?;
+    Ok(true)
+}
+
+#[tauri::command]
 fn recent_projects(app: AppHandle) -> Result<Vec<Value>, String> {
     let items = read_recent_projects(&app)?;
     Ok(items
@@ -727,6 +866,9 @@ fn render_video_sync(
     }
 
     let output_path = make_output_path(&local, &video_path, output_dir)?;
+    let history_source_video = video_path.clone();
+    let history_voice = voice.clone();
+    let history_device_mode = device_mode.clone();
     let request = json!({
         "id": "desktop-render",
         "method": "render",
@@ -842,7 +984,20 @@ fn render_video_sync(
         );
     }
 
-    Ok(message.get("result").cloned().unwrap_or(Value::Null))
+    let result = message.get("result").cloned().unwrap_or(Value::Null);
+    remember_render(
+        &app,
+        &history_source_video,
+        &result,
+        &history_voice,
+        speed,
+        original_volume,
+        ducking,
+        auto_timing,
+        subtitles,
+        &history_device_mode,
+    )?;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -925,6 +1080,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             runtime_status,
             runtime_diagnostics,
+            render_history,
+            remove_render_history,
+            clear_render_history,
             recent_projects,
             remove_recent_project,
             clear_recent_projects,

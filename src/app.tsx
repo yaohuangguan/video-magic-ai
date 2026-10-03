@@ -21,6 +21,25 @@ type RecentProject = {
   exists: boolean;
 };
 
+type RenderHistoryItem = {
+  id: string;
+  path: string;
+  name: string;
+  sourceVideo: string;
+  createdAt: number;
+  exists: boolean;
+  durationSeconds?: number | null;
+  voice: string;
+  speed: number;
+  originalVolume: number;
+  ducking: boolean;
+  autoTiming: boolean;
+  subtitles: boolean;
+  deviceMode: InferenceMode;
+  narrationPath?: string | null;
+  subtitlePath?: string | null;
+};
+
 type CreatorPreset = {
   id: string;
   name: string;
@@ -190,6 +209,7 @@ function App() {
   const [projectFilePath, setProjectFilePath] = useState("");
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
   const [showRecentProjects, setShowRecentProjects] = useState(false);
+  const [renderHistory, setRenderHistory] = useState<RenderHistoryItem[]>([]);
   const [customPresets, setCustomPresets] = useState<CreatorPreset[]>([]);
   const [showPresetForm, setShowPresetForm] = useState(false);
   const [presetName, setPresetName] = useState("");
@@ -279,9 +299,19 @@ function App() {
     }
   }
 
+  async function refreshRenderHistory() {
+    try {
+      const items = await invoke<RenderHistoryItem[]>("render_history");
+      setRenderHistory(items);
+    } catch {
+      setRenderHistory([]);
+    }
+  }
+
   useEffect(() => {
     void refreshRuntime();
     void refreshRecentProjects();
+    void refreshRenderHistory();
 
     let disposed = false;
     const cleanups: Array<() => void> = [];
@@ -568,6 +598,7 @@ function App() {
       setRenderProgress(1);
       setRenderStage("done");
       setStatus(rendered ? "Video ready" : "Render completed");
+      await refreshRenderHistory();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message.toLowerCase().includes("cancel")) {
@@ -591,6 +622,47 @@ function App() {
     if (outputDir) {
       await openPath(outputDir);
     }
+  }
+
+  async function openRenderFile(item: RenderHistoryItem) {
+    if (!item.exists) {
+      setStatus("Export file no longer exists");
+      await refreshRenderHistory();
+      return;
+    }
+    await openPath(item.path);
+  }
+
+  async function showRenderInFolder(item: RenderHistoryItem) {
+    if (!item.exists) {
+      setStatus("Export file no longer exists");
+      await refreshRenderHistory();
+      return;
+    }
+    await openPath(parentDirectory(item.path));
+  }
+
+  function reuseRenderSettings(item: RenderHistoryItem) {
+    if (voices.some((candidate) => candidate.id === item.voice)) {
+      setVoice(item.voice);
+    }
+    setSpeed(item.speed);
+    setOriginalVolume(Math.round(item.originalVolume * 100));
+    setDucking(item.ducking);
+    setAutoTiming(item.autoTiming);
+    setSubtitles(item.subtitles);
+    setDeviceMode(item.deviceMode);
+    setStatus("Render settings restored");
+  }
+
+  async function removeRenderHistory(id: string) {
+    await invoke<boolean>("remove_render_history", { id });
+    await refreshRenderHistory();
+  }
+
+  async function clearRenderHistory() {
+    await invoke<boolean>("clear_render_history");
+    setRenderHistory([]);
   }
 
   function projectSnapshot(): SavedProject {
@@ -1039,6 +1111,50 @@ function App() {
               <button className="secondary-button" type="button" onClick={showOutput}>
                 Show in folder
               </button>
+            </section>
+          )}
+
+          {renderHistory.length > 0 && (
+            <section className="render-history-card">
+              <div className="history-heading">
+                <div>
+                  <span className="output-label">RECENT EXPORTS</span>
+                  <strong>Render history</strong>
+                </div>
+                <button className="text-button" type="button" onClick={clearRenderHistory}>
+                  Clear
+                </button>
+              </div>
+
+              <div className="render-history-list">
+                {renderHistory.slice(0, 6).map((item) => (
+                  <article className={"render-history-item " + (!item.exists ? "missing" : "")} key={item.id}>
+                    <button
+                      className="render-history-main"
+                      type="button"
+                      disabled={!item.exists}
+                      onClick={() => openRenderFile(item)}
+                    >
+                      <div className="render-history-icon">▶</div>
+                      <div className="render-history-copy">
+                        <strong>{item.name}</strong>
+                        <span>
+                          {new Date(item.createdAt * 1000).toLocaleString()} · {item.voice} · {item.speed.toFixed(2)}×
+                          {typeof item.durationSeconds === "number"
+                            ? " · " + Math.round(item.durationSeconds) + "s"
+                            : ""}
+                        </span>
+                        <code>{item.path}</code>
+                      </div>
+                    </button>
+                    <div className="render-history-actions">
+                      <button type="button" onClick={() => reuseRenderSettings(item)}>Use settings</button>
+                      <button type="button" disabled={!item.exists} onClick={() => showRenderInFolder(item)}>Folder</button>
+                      <button type="button" onClick={() => removeRenderHistory(item.id)}>Remove</button>
+                    </div>
+                  </article>
+                ))}
+              </div>
             </section>
           )}
         </div>
