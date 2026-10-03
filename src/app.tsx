@@ -41,6 +41,13 @@ type TimelinePlan = {
   draft: boolean;
 };
 
+type WaveformResult = {
+  peaks: number[];
+  points: number;
+  durationSeconds: number;
+  hasAudio: boolean;
+};
+
 type RecentProject = {
   path: string;
   name: string;
@@ -228,6 +235,8 @@ function formatTime(seconds: number) {
 function App() {
   const [videoPath, setVideoPath] = useState("");
   const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
+  const [waveform, setWaveform] = useState<number[]>([]);
+  const [waveformLoading, setWaveformLoading] = useState(false);
   const [previewReady, setPreviewReady] = useState(false);
   const [timeline, setTimeline] = useState<TimelineSegment[]>([]);
   const [timelineDirty, setTimelineDirty] = useState(false);
@@ -498,6 +507,8 @@ function App() {
     if (!videoPath) {
       setPreviewReady(false);
       setVideoInfo(null);
+      setWaveform([]);
+      setWaveformLoading(false);
       setCurrentTime(0);
       return;
     }
@@ -518,6 +529,25 @@ function App() {
           });
           if (!disposed) {
             setVideoInfo(info);
+            setWaveformLoading(info.hasAudio);
+          }
+
+          if (info.hasAudio) {
+            try {
+              const wave = await invoke<WaveformResult>("video_waveform", {
+                videoPath,
+                points: 260,
+                deviceMode,
+              });
+              if (!disposed) {
+                setWaveform(wave.peaks);
+              }
+            } finally {
+              if (!disposed) setWaveformLoading(false);
+            }
+          } else if (!disposed) {
+            setWaveform([]);
+            setWaveformLoading(false);
           }
         }
       } catch (error) {
@@ -606,6 +636,8 @@ function App() {
 
   function selectVideoPath(path: string) {
     setVideoPath(path);
+    setWaveform([]);
+    setWaveformLoading(false);
     setOutputPath("");
     setRenderProgress(0);
     setRenderStage("idle");
@@ -686,7 +718,7 @@ function App() {
     setTimelineDirty(false);
   }
 
-  function beginTimelineDrag(event: React.PointerEvent<HTMLButtonElement>, id: string) {
+  function beginTimelineDrag(event: React.PointerEvent<HTMLDivElement>, id: string) {
     if (!videoInfo?.durationSeconds || !timelineTrackRef.current) return;
 
     event.preventDefault();
@@ -719,6 +751,64 @@ function App() {
       );
       updateTimelineBounds(id, start, start + duration);
       seekVideo(start);
+    };
+
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
+
+  function beginTimelineResize(
+    event: React.PointerEvent<HTMLSpanElement>,
+    id: string,
+    edge: "start" | "end",
+  ) {
+    if (!videoInfo?.durationSeconds || !timelineTrackRef.current) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+
+    const index = timeline.findIndex((segment) => segment.id === id);
+    const segment = timeline[index];
+    if (!segment) return;
+
+    setSelectedSegmentId(id);
+    const rect = timelineTrackRef.current.getBoundingClientRect();
+    const initialX = event.clientX;
+    const originalStart = segment.start;
+    const originalEnd = segment.end;
+    const previousEnd = index > 0 ? timeline[index - 1].end + 0.03 : 0;
+    const nextStart =
+      index < timeline.length - 1
+        ? timeline[index + 1].start - 0.03
+        : videoInfo.durationSeconds;
+    const minimumDuration = 0.08;
+
+    const onMove = (moveEvent: PointerEvent) => {
+      const deltaSeconds =
+        ((moveEvent.clientX - initialX) / Math.max(rect.width - 92, 1)) *
+        videoInfo.durationSeconds;
+
+      if (edge === "start") {
+        const start = Math.max(
+          previousEnd,
+          Math.min(originalStart + deltaSeconds, originalEnd - minimumDuration),
+        );
+        updateTimelineBounds(id, start, originalEnd);
+        seekVideo(start);
+      } else {
+        const end = Math.min(
+          nextStart,
+          Math.max(originalEnd + deltaSeconds, originalStart + minimumDuration),
+        );
+        updateTimelineBounds(id, originalStart, end);
+        seekVideo(end);
+      }
     };
 
     const onUp = () => {
@@ -1128,6 +1218,8 @@ function App() {
     setProjectFilePath("");
     setVideoPath("");
     setVideoInfo(null);
+    setWaveform([]);
+    setWaveformLoading(false);
     setPreviewReady(false);
     setTimeline([]);
     setTimelineDirty(false);
@@ -1203,6 +1295,22 @@ function App() {
       : 0;
   const playheadPosition =
     "calc(92px + (100% - 92px) * " + String(playheadRatio) + ")";
+
+  const waveformPolygon =
+    waveform.length > 1
+      ? [
+          ...waveform.map(
+            (value, index) =>
+              String(index) + "," + String(50 - Math.max(0, Math.min(1, value)) * 43),
+          ),
+          ...waveform
+            .map(
+              (value, index) =>
+                String(index) + "," + String(50 + Math.max(0, Math.min(1, value)) * 43),
+            )
+            .reverse(),
+        ].join(" ")
+      : "";
 
   return (
     <main className="app-shell">
@@ -1493,6 +1601,19 @@ function App() {
                   }}
                 >
                   <div className="timeline-track-label">NARRATION</div>
+                  <div className={"timeline-waveform " + (waveformLoading ? "loading" : "")}>
+                    {waveformPolygon ? (
+                      <svg
+                        viewBox={"0 0 " + String(Math.max(waveform.length - 1, 1)) + " 100"}
+                        preserveAspectRatio="none"
+                        aria-hidden="true"
+                      >
+                        <polygon points={waveformPolygon} />
+                      </svg>
+                    ) : (
+                      <span>{waveformLoading ? "Reading source audio…" : "No waveform"}</span>
+                    )}
+                  </div>
                   <div className="timeline-playhead" style={{ left: playheadPosition }}>
                     <span>{formatTime(currentTime)}</span>
                   </div>
@@ -1503,9 +1624,10 @@ function App() {
                         ? ((segment.end - segment.start) / videoDuration) * 100
                         : 0;
                     return (
-                      <button
+                      <div
                         key={segment.id}
-                        type="button"
+                        role="button"
+                        tabIndex={0}
                         className={
                           "timeline-block " +
                           (selectedSegmentId === segment.id ? "selected" : "")
@@ -1532,16 +1654,39 @@ function App() {
                           setSelectedSegmentId(segment.id);
                           seekVideo(segment.start);
                         }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            setSelectedSegmentId(segment.id);
+                            seekVideo(segment.start);
+                          }
+                        }}
                       >
-                        <span>{String(index + 1).padStart(2, "0")}</span>
+                        <span
+                          className="timeline-resize-handle start"
+                          title="Resize narration start"
+                          onPointerDown={(event) =>
+                            beginTimelineResize(event, segment.id, "start")
+                          }
+                        />
+                        <span className="timeline-block-index">
+                          {String(index + 1).padStart(2, "0")}
+                        </span>
                         <strong>{segment.text}</strong>
-                      </button>
+                        <span
+                          className="timeline-resize-handle end"
+                          title="Resize narration end"
+                          onPointerDown={(event) =>
+                            beginTimelineResize(event, segment.id, "end")
+                          }
+                        />
+                      </div>
                     );
                   })}
                 </div>
 
                 <div className="timeline-help">
-                  <span>Drag blocks horizontally · click the track to seek the video</span>
+                  <span>Drag blocks · pull edge handles to resize · click track to seek</span>
                   <span>{timeline.length} narration segments · {formatTime(videoDuration)}</span>
                 </div>
 

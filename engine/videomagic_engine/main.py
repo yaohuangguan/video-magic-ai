@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from .media import mix_voiceover, probe_video
+from .media import mix_voiceover, probe_video, waveform_peaks
 from .subtitles import write_srt
 from .tts import plan_timeline, synthesize, synthesize_timed, synthesize_timeline
 from .voices import VOICES
@@ -101,6 +101,12 @@ def handle(message: dict[str, Any], request_id: str | None) -> Any:
         return {"voices": VOICES}
     if method == "probe_video":
         return probe_video(params["videoPath"])
+
+    if method == "waveform":
+        return waveform_peaks(
+            params["videoPath"],
+            int(params.get("points", 240)),
+        )
 
     if method == "plan_timeline":
         return plan_timeline(
