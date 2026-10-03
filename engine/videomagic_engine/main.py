@@ -12,7 +12,7 @@ from typing import Any
 
 from .media import mix_voiceover, probe_video
 from .subtitles import write_srt
-from .tts import synthesize, synthesize_timed
+from .tts import plan_timeline, synthesize, synthesize_timed, synthesize_timeline
 from .voices import VOICES
 
 
@@ -102,6 +102,12 @@ def handle(message: dict[str, Any], request_id: str | None) -> Any:
     if method == "probe_video":
         return probe_video(params["videoPath"])
 
+    if method == "plan_timeline":
+        return plan_timeline(
+            text=params["text"],
+            target_duration=float(params["targetDuration"]),
+        )
+
     if method == "synthesize":
         output = params.get("outputPath") or str(_default_output("narration.wav"))
         emit_progress(request_id, "tts", 0.05, "Loading local Mandarin voice model")
@@ -130,7 +136,16 @@ def handle(message: dict[str, Any], request_id: str | None) -> Any:
             narration_path = str(_default_output("narration.wav"))
             emit_progress(request_id, "tts", 0.08, "Generating Mandarin narration")
 
-            if auto_timing:
+            custom_timeline = params.get("timeline")
+            if custom_timeline:
+                tts_result = synthesize_timeline(
+                    segments=custom_timeline,
+                    output_path=narration_path,
+                    target_duration=video_duration,
+                    voice=params.get("voice", "zm_010"),
+                    speed=float(params.get("speed", 1.0)),
+                )
+            elif auto_timing:
                 tts_result = synthesize_timed(
                     text=params["text"],
                     output_path=narration_path,

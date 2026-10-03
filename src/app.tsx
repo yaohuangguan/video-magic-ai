@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { openPath } from "@tauri-apps/plugin-opener";
@@ -13,6 +13,33 @@ type VoicePreset = {
 };
 
 type InferenceMode = "auto" | "cuda" | "cpu";
+
+type TimelineSegment = {
+  id: string;
+  text: string;
+  start: number;
+  end: number;
+  windowEnd?: number;
+  speed?: number;
+};
+
+type VideoInfo = {
+  path: string;
+  durationSeconds: number;
+  hasAudio: boolean;
+  streams?: Array<{
+    codec_type?: string;
+    codec_name?: string;
+    width?: number;
+    height?: number;
+  }>;
+};
+
+type TimelinePlan = {
+  timeline: TimelineSegment[];
+  durationSeconds: number;
+  draft: boolean;
+};
 
 type RecentProject = {
   path: string;
@@ -38,6 +65,7 @@ type RenderHistoryItem = {
   deviceMode: InferenceMode;
   narrationPath?: string | null;
   subtitlePath?: string | null;
+  timeline?: TimelineSegment[] | null;
 };
 
 type CreatorPreset = {
@@ -59,6 +87,12 @@ type RenderResult = {
     videoDurationSeconds?: number;
     ducking?: boolean;
   };
+  narration?: {
+    timeline?: TimelineSegment[];
+    customTimeline?: boolean;
+    autoTiming?: boolean;
+    device?: string;
+  } | null;
 };
 
 type RuntimeStatus = {
@@ -123,6 +157,8 @@ type SavedProject = {
   subtitles: boolean;
   outputDir: string;
   deviceMode: InferenceMode;
+  timeline?: TimelineSegment[];
+  videoDuration?: number;
 };
 
 const PROJECT_STORAGE_KEY = "videomagic.project.v1";
@@ -182,8 +218,21 @@ function dataDirectory(parent: string) {
   return parent.replace(/[\\/]+$/, "") + "\\VideoMagicData";
 }
 
+function formatTime(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0:00.0";
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds - minutes * 60;
+  return minutes + ":" + rest.toFixed(1).padStart(4, "0");
+}
+
 function App() {
   const [videoPath, setVideoPath] = useState("");
+  const [videoInfo, setVideoInfo] = useState<VideoInfo | null>(null);
+  const [previewReady, setPreviewReady] = useState(false);
+  const [timeline, setTimeline] = useState<TimelineSegment[]>([]);
+  const [timelineDirty, setTimelineDirty] = useState(false);
+  const [selectedSegmentId, setSelectedSegmentId] = useState("");
+  const [currentTime, setCurrentTime] = useState(0);
   const [script, setScript] = useState("");
   const [voice, setVoice] = useState(voices[1].id);
   const [speed, setSpeed] = useState(1.05);
@@ -221,6 +270,8 @@ function App() {
   const [diagnosticsCopied, setDiagnosticsCopied] = useState(false);
 
   const previewAudio = useRef<HTMLAudioElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const timelineTrackRef = useRef<HTMLDivElement | null>(null);
   const projectHydrated = useRef(false);
 
   const canGenerate = Boolean(
@@ -364,6 +415,18 @@ function App() {
         if (typeof saved.autoTiming === "boolean") setAutoTiming(saved.autoTiming);
         if (typeof saved.subtitles === "boolean") setSubtitles(saved.subtitles);
         if (typeof saved.outputDir === "string") setOutputDir(saved.outputDir);
+        if (Array.isArray(saved.timeline)) {
+          setTimeline(saved.timeline);
+          setSelectedSegmentId(saved.timeline[0]?.id ?? "");
+          setTimelineDirty(false);
+        }
+        if (typeof saved.videoDuration === "number" && saved.videoDuration > 0 && typeof saved.videoPath === "string") {
+          setVideoInfo({
+            path: saved.videoPath,
+            durationSeconds: saved.videoDuration,
+            hasAudio: true,
+          });
+        }
         if (saved.deviceMode === "auto" || saved.deviceMode === "cuda" || saved.deviceMode === "cpu") {
           setDeviceMode(saved.deviceMode);
         }
@@ -408,6 +471,8 @@ function App() {
         subtitles,
         outputDir,
         deviceMode,
+        timeline,
+        videoDuration: videoInfo?.durationSeconds,
       };
       localStorage.setItem(PROJECT_STORAGE_KEY, JSON.stringify(snapshot));
       setLastSavedAt(Date.now());
@@ -425,7 +490,47 @@ function App() {
     subtitles,
     outputDir,
     deviceMode,
+    timeline,
+    videoInfo?.durationSeconds,
   ]);
+
+  useEffect(() => {
+    if (!videoPath) {
+      setPreviewReady(false);
+      setVideoInfo(null);
+      setCurrentTime(0);
+      return;
+    }
+
+    let disposed = false;
+    setPreviewReady(false);
+
+    void (async () => {
+      try {
+        await invoke<boolean>("allow_preview_file", { path: videoPath });
+        if (disposed) return;
+        setPreviewReady(true);
+
+        if (runtime?.ready) {
+          const info = await invoke<VideoInfo>("probe_video_info", {
+            videoPath,
+            deviceMode,
+          });
+          if (!disposed) {
+            setVideoInfo(info);
+          }
+        }
+      } catch (error) {
+        if (!disposed) {
+          setStatus(error instanceof Error ? error.message : String(error));
+        }
+      }
+    })();
+
+    return () => {
+      disposed = true;
+    };
+  }, [videoPath, runtime?.ready, deviceMode]);
 
   useEffect(() => {
     let disposed = false;
@@ -447,11 +552,7 @@ function App() {
               /\.(mp4|mov|mkv|webm|m4v)$/i.test(item),
             );
             if (path) {
-              setVideoPath(path);
-              setOutputPath("");
-              setRenderProgress(0);
-              setRenderStage("idle");
-              setStatus("Video ready");
+              selectVideoPath(path);
             }
           }
         }),
@@ -503,6 +604,161 @@ function App() {
     }
   }
 
+  function selectVideoPath(path: string) {
+    setVideoPath(path);
+    setOutputPath("");
+    setRenderProgress(0);
+    setRenderStage("idle");
+    setCurrentTime(0);
+    setTimeline([]);
+    setTimelineDirty(false);
+    setSelectedSegmentId("");
+    setStatus("Video ready");
+  }
+
+  async function buildTimeline() {
+    if (!runtime?.ready || !videoInfo?.durationSeconds || !script.trim()) return;
+
+    setStatus("Planning narration timeline…");
+    try {
+      const result = await invoke<TimelinePlan>("plan_narration_timeline", {
+        text: script.trim(),
+        targetDuration: videoInfo.durationSeconds,
+        deviceMode,
+      });
+      setTimeline(result.timeline);
+      setSelectedSegmentId(result.timeline[0]?.id ?? "");
+      setTimelineDirty(false);
+      setStatus("Narration timeline ready");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  function seekVideo(time: number) {
+    const duration = videoInfo?.durationSeconds ?? 0;
+    const next = Math.max(0, Math.min(duration || time, time));
+    setCurrentTime(next);
+    if (videoRef.current) {
+      videoRef.current.currentTime = next;
+    }
+  }
+
+  function updateTimelineSegmentText(id: string, text: string) {
+    setTimeline((current) => {
+      const updated = current.map((segment) =>
+        segment.id === id ? { ...segment, text } : segment,
+      );
+      setScript(updated.map((segment) => segment.text.trim()).filter(Boolean).join(" "));
+      return updated;
+    });
+    setTimelineDirty(false);
+  }
+
+  function updateTimelineBounds(id: string, nextStart: number, nextEnd: number) {
+    if (
+      !videoInfo?.durationSeconds ||
+      !Number.isFinite(nextStart) ||
+      !Number.isFinite(nextEnd)
+    ) return;
+
+    setTimeline((current) => {
+      const index = current.findIndex((segment) => segment.id === id);
+      if (index < 0) return current;
+
+      const previousEnd = index > 0 ? current[index - 1].end + 0.03 : 0;
+      const nextStartLimit =
+        index < current.length - 1
+          ? current[index + 1].start - 0.03
+          : videoInfo.durationSeconds;
+
+      const minimumDuration = 0.08;
+      const start = Math.max(previousEnd, Math.min(nextStart, nextStartLimit - minimumDuration));
+      const end = Math.max(
+        start + minimumDuration,
+        Math.min(nextEnd, nextStartLimit, videoInfo.durationSeconds),
+      );
+
+      return current.map((segment, itemIndex) =>
+        itemIndex === index ? { ...segment, start, end } : segment,
+      );
+    });
+    setTimelineDirty(false);
+  }
+
+  function beginTimelineDrag(event: React.PointerEvent<HTMLButtonElement>, id: string) {
+    if (!videoInfo?.durationSeconds || !timelineTrackRef.current) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    const index = timeline.findIndex((segment) => segment.id === id);
+    const segment = timeline[index];
+    if (!segment) return;
+
+    setSelectedSegmentId(id);
+    seekVideo(segment.start);
+
+    const rect = timelineTrackRef.current.getBoundingClientRect();
+    const initialX = event.clientX;
+    const originalStart = segment.start;
+    const duration = segment.end - segment.start;
+    const previousEnd = index > 0 ? timeline[index - 1].end + 0.03 : 0;
+    const nextStartLimit =
+      index < timeline.length - 1
+        ? timeline[index + 1].start - 0.03
+        : videoInfo.durationSeconds;
+
+    const onMove = (moveEvent: PointerEvent) => {
+      const deltaSeconds =
+        ((moveEvent.clientX - initialX) / Math.max(rect.width - 92, 1)) *
+        videoInfo.durationSeconds;
+      const start = Math.max(
+        previousEnd,
+        Math.min(originalStart + deltaSeconds, nextStartLimit - duration),
+      );
+      updateTimelineBounds(id, start, start + duration);
+      seekVideo(start);
+    };
+
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
+
+  async function previewTimelineSegment(segment: TimelineSegment) {
+    if (!runtime?.ready || isPreviewing || !segment.text.trim()) return;
+
+    previewAudio.current?.pause();
+    setIsPreviewing(true);
+    setSelectedSegmentId(segment.id);
+    seekVideo(segment.start);
+    setStatus("Generating segment preview…");
+
+    try {
+      const result = await invoke<PreviewResult>("preview_voice", {
+        voice,
+        speed,
+        text: segment.text.trim(),
+        deviceMode,
+      });
+      const audio = new Audio(result.audioDataUrl);
+      previewAudio.current = audio;
+      audio.onended = () => setIsPreviewing(false);
+      audio.onerror = () => setIsPreviewing(false);
+      await audio.play();
+      setEngineWarm(true);
+      setStatus("Segment preview playing");
+    } catch (error) {
+      setIsPreviewing(false);
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   async function chooseVideo() {
     const selected = await open({
       multiple: false,
@@ -516,11 +772,7 @@ function App() {
     });
 
     if (typeof selected === "string") {
-      setVideoPath(selected);
-      setOutputPath("");
-      setRenderProgress(0);
-      setRenderStage("idle");
-      setStatus("Video ready");
+      selectVideoPath(selected);
     }
   }
 
@@ -598,6 +850,15 @@ function App() {
         autoTiming,
         subtitles,
         deviceMode,
+        timeline:
+          timeline.length > 0 && !timelineDirty
+            ? timeline.map((segment) => ({
+                id: segment.id,
+                text: segment.text,
+                start: segment.start,
+                end: segment.end,
+              }))
+            : null,
       });
 
       const rendered = result.video?.path ?? "";
@@ -605,6 +866,24 @@ function App() {
       setRenderProgress(1);
       setRenderStage("done");
       setEngineWarm(true);
+      if (result.narration?.timeline?.length) {
+        const renderedTimeline = result.narration.timeline.map((segment, index) => ({
+          ...segment,
+          id: segment.id || "segment-" + String(index + 1),
+          end: segment.windowEnd ?? segment.end,
+        }));
+        setTimeline(renderedTimeline);
+        setSelectedSegmentId(renderedTimeline[0]?.id ?? "");
+        setTimelineDirty(false);
+      }
+      if (typeof result.video?.videoDurationSeconds === "number") {
+        setVideoInfo((current) => ({
+          path: videoPath,
+          durationSeconds: result.video?.videoDurationSeconds ?? current?.durationSeconds ?? 0,
+          hasAudio: current?.hasAudio ?? true,
+          streams: current?.streams,
+        }));
+      }
       setStatus(rendered ? "Video ready" : "Render completed");
       await refreshRenderHistory();
     } catch (error) {
@@ -686,12 +965,28 @@ function App() {
       subtitles,
       outputDir,
       deviceMode,
+      timeline,
+      videoDuration: videoInfo?.durationSeconds,
     };
   }
 
   function applyProject(project: Partial<SavedProject>) {
-    setVideoPath(typeof project.videoPath === "string" ? project.videoPath : "");
+    const restoredVideoPath = typeof project.videoPath === "string" ? project.videoPath : "";
+    setVideoPath(restoredVideoPath);
     setScript(typeof project.script === "string" ? project.script : "");
+    const restoredTimeline = Array.isArray(project.timeline) ? project.timeline : [];
+    setTimeline(restoredTimeline);
+    setSelectedSegmentId(restoredTimeline[0]?.id ?? "");
+    setTimelineDirty(false);
+    setVideoInfo(
+      typeof project.videoDuration === "number" && project.videoDuration > 0
+        ? {
+            path: restoredVideoPath,
+            durationSeconds: project.videoDuration,
+            hasAudio: true,
+          }
+        : null,
+    );
     if (typeof project.voice === "string" && voices.some((item) => item.id === project.voice)) {
       setVoice(project.voice);
     }
@@ -832,6 +1127,12 @@ function App() {
     setIsPreviewing(false);
     setProjectFilePath("");
     setVideoPath("");
+    setVideoInfo(null);
+    setPreviewReady(false);
+    setTimeline([]);
+    setTimelineDirty(false);
+    setSelectedSegmentId("");
+    setCurrentTime(0);
     setScript("");
     setOutputPath("");
     setRenderProgress(0);
@@ -894,6 +1195,14 @@ function App() {
 
   const progressWidth = String(Math.max(0, Math.min(100, renderProgress * 100))) + "%";
   const runtimeProgressWidth = String(Math.max(0, Math.min(100, runtimeProgress * 100))) + "%";
+  const videoDuration = videoInfo?.durationSeconds ?? 0;
+  const videoPreviewSrc = previewReady && videoPath ? convertFileSrc(videoPath) : "";
+  const playheadRatio =
+    videoDuration > 0
+      ? Math.max(0, Math.min(1, currentTime / videoDuration))
+      : 0;
+  const playheadPosition =
+    "calc(92px + (100% - 92px) * " + String(playheadRatio) + ")";
 
   return (
     <main className="app-shell">
@@ -1026,6 +1335,41 @@ function App() {
               </div>
               <span className="picker-action">{videoPath ? "Selected" : "Browse"}</span>
             </button>
+
+            {videoPath && (
+              <div className="video-preview-shell">
+                {videoPreviewSrc ? (
+                  <video
+                    key={videoPath}
+                    ref={videoRef}
+                    className="video-preview"
+                    src={videoPreviewSrc}
+                    controls
+                    preload="metadata"
+                    onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+                    onSeeked={(event) => setCurrentTime(event.currentTarget.currentTime)}
+                    onLoadedMetadata={(event) => {
+                      const duration = event.currentTarget.duration;
+                      if (Number.isFinite(duration) && duration > 0) {
+                        setVideoInfo((current) => ({
+                          path: videoPath,
+                          durationSeconds: current?.durationSeconds || duration,
+                          hasAudio: current?.hasAudio ?? true,
+                          streams: current?.streams,
+                        }));
+                      }
+                    }}
+                  />
+                ) : (
+                  <div className="video-preview-loading">Preparing secure local preview…</div>
+                )}
+                <div className="video-preview-meta">
+                  <span>{videoDuration > 0 ? formatTime(videoDuration) : "Reading duration…"}</span>
+                  <span>{videoInfo?.hasAudio === false ? "No source audio" : "Source audio detected"}</span>
+                  <span>Local file · not uploaded</span>
+                </div>
+              </div>
+            )}
           </section>
 
           <section className="workspace-card script-card">
@@ -1043,7 +1387,10 @@ function App() {
             <textarea
               className="script-editor"
               value={script}
-              onChange={(event) => setScript(event.target.value)}
+              onChange={(event) => {
+                setScript(event.target.value);
+                if (timeline.length > 0) setTimelineDirty(true);
+              }}
               placeholder="比如：不是哥们，这猴子是真的没拿自己当外人。上来先把游客的可乐抢了，结果下一秒更离谱……"
             />
 
@@ -1059,6 +1406,233 @@ function App() {
                 {isPreviewing ? "Playing preview" : "Preview selected voice"}
               </button>
             </div>
+          </section>
+
+          <section className="workspace-card timeline-card">
+            <div className="section-heading timeline-heading">
+              <div>
+                <span className="section-index">03</span>
+                <div>
+                  <h2>Narration timeline</h2>
+                  <p>Drag sentence blocks to control exactly when narration starts.</p>
+                </div>
+              </div>
+              <div className="timeline-heading-actions">
+                {timelineDirty && <span className="timeline-stale">Out of sync</span>}
+                {timeline.length > 0 && !timelineDirty && (
+                  <span className="timeline-manual">Manual timing</span>
+                )}
+                {timeline.length > 0 && (
+                  <button
+                    className="text-button"
+                    type="button"
+                    disabled={isGenerating}
+                    onClick={() => {
+                      setTimeline([]);
+                      setTimelineDirty(false);
+                      setSelectedSegmentId("");
+                      setStatus("Auto timing enabled");
+                    }}
+                  >
+                    Use auto timing
+                  </button>
+                )}
+                <button
+                  className="secondary-button compact"
+                  type="button"
+                  disabled={
+                    !runtime?.ready ||
+                    !videoInfo?.durationSeconds ||
+                    !script.trim() ||
+                    isGenerating
+                  }
+                  onClick={() => void buildTimeline()}
+                >
+                  {timeline.length > 0 ? "Rebuild timeline" : "Build timeline"}
+                </button>
+              </div>
+            </div>
+
+            {!videoPath || !script.trim() ? (
+              <div className="timeline-empty">
+                <strong>Add a video and narration script first.</strong>
+                <span>VideoMagic will split the script into editable sentence blocks.</span>
+              </div>
+            ) : timeline.length === 0 ? (
+              <div className="timeline-empty">
+                <strong>No manual timeline yet.</strong>
+                <span>
+                  You can keep using Auto Timing, or build a timeline for frame-aware control.
+                </span>
+              </div>
+            ) : (
+              <>
+                <div className="timeline-ruler">
+                  {[0, 0.25, 0.5, 0.75, 1].map((point) => (
+                    <span key={point} style={{ left: String(point * 100) + "%" }}>
+                      {formatTime(videoDuration * point)}
+                    </span>
+                  ))}
+                </div>
+
+                <div
+                  className="timeline-track"
+                  ref={timelineTrackRef}
+                  onClick={(event) => {
+                    if (!videoDuration) return;
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    const ratio = Math.max(
+                      0,
+                      Math.min(
+                        1,
+                        (event.clientX - (rect.left + 92)) /
+                          Math.max(rect.width - 92, 1),
+                      ),
+                    );
+                    seekVideo(ratio * videoDuration);
+                  }}
+                >
+                  <div className="timeline-track-label">NARRATION</div>
+                  <div className="timeline-playhead" style={{ left: playheadPosition }}>
+                    <span>{formatTime(currentTime)}</span>
+                  </div>
+                  {timeline.map((segment, index) => {
+                    const left = videoDuration > 0 ? (segment.start / videoDuration) * 100 : 0;
+                    const width =
+                      videoDuration > 0
+                        ? ((segment.end - segment.start) / videoDuration) * 100
+                        : 0;
+                    return (
+                      <button
+                        key={segment.id}
+                        type="button"
+                        className={
+                          "timeline-block " +
+                          (selectedSegmentId === segment.id ? "selected" : "")
+                        }
+                        style={{
+                          left:
+                            "calc(92px + (100% - 92px) * " +
+                            String(left / 100) +
+                            ")",
+                          width:
+                            "max(18px, calc((100% - 92px) * " +
+                            String(Math.max(width, 1.6) / 100) +
+                            "))",
+                        }}
+                        title={
+                          formatTime(segment.start) +
+                          " – " +
+                          formatTime(segment.end) +
+                          "\n" +
+                          segment.text
+                        }
+                        onPointerDown={(event) => beginTimelineDrag(event, segment.id)}
+                        onDoubleClick={() => {
+                          setSelectedSegmentId(segment.id);
+                          seekVideo(segment.start);
+                        }}
+                      >
+                        <span>{String(index + 1).padStart(2, "0")}</span>
+                        <strong>{segment.text}</strong>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="timeline-help">
+                  <span>Drag blocks horizontally · click the track to seek the video</span>
+                  <span>{timeline.length} narration segments · {formatTime(videoDuration)}</span>
+                </div>
+
+                <div className="timeline-segment-list">
+                  {timeline.map((segment, index) => (
+                    <article
+                      key={segment.id}
+                      className={
+                        "timeline-segment-editor " +
+                        (selectedSegmentId === segment.id ? "selected" : "")
+                      }
+                      onClick={() => {
+                        setSelectedSegmentId(segment.id);
+                        seekVideo(segment.start);
+                      }}
+                    >
+                      <div className="segment-number">{String(index + 1).padStart(2, "0")}</div>
+                      <div className="segment-content">
+                        <input
+                          className="segment-text-input"
+                          value={segment.text}
+                          onClick={(event) => event.stopPropagation()}
+                          onChange={(event) =>
+                            updateTimelineSegmentText(segment.id, event.target.value)
+                          }
+                        />
+                        <div className="segment-timing">
+                          <label>
+                            Start
+                            <input
+                              type="number"
+                              min="0"
+                              max={videoDuration}
+                              step="0.05"
+                              value={segment.start.toFixed(2)}
+                              onClick={(event) => event.stopPropagation()}
+                              onChange={(event) =>
+                                updateTimelineBounds(
+                                  segment.id,
+                                  Number(event.target.value),
+                                  segment.end,
+                                )
+                              }
+                            />
+                          </label>
+                          <label>
+                            End
+                            <input
+                              type="number"
+                              min="0"
+                              max={videoDuration}
+                              step="0.05"
+                              value={segment.end.toFixed(2)}
+                              onClick={(event) => event.stopPropagation()}
+                              onChange={(event) =>
+                                updateTimelineBounds(
+                                  segment.id,
+                                  segment.start,
+                                  Number(event.target.value),
+                                )
+                              }
+                            />
+                          </label>
+                          <span className="segment-duration">
+                            {(segment.end - segment.start).toFixed(2)}s window
+                          </span>
+                        </div>
+                      </div>
+                      <button
+                        className="segment-preview-button"
+                        type="button"
+                        disabled={isPreviewing || !runtime?.ready}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void previewTimelineSegment(segment);
+                        }}
+                      >
+                        ▶ Preview
+                      </button>
+                    </article>
+                  ))}
+                </div>
+
+                {timelineDirty && (
+                  <div className="timeline-warning">
+                    The main script changed after this timeline was built. Rebuild the timeline
+                    before rendering, or edit sentence text directly inside the timeline.
+                  </div>
+                )}
+              </>
+            )}
           </section>
 
           <section className="task-card">
@@ -1427,11 +2001,16 @@ function App() {
             <label className="switch-row">
               <div>
                 <strong>Auto timing</strong>
-                <span>Split the script into sentences and spread narration across the clip.</span>
+                <span>
+                  {timeline.length > 0 && !timelineDirty
+                    ? "Manual timeline is active and overrides automatic placement."
+                    : "Split the script into sentences and spread narration across the clip."}
+                </span>
               </div>
               <input
                 type="checkbox"
                 checked={autoTiming}
+                disabled={timeline.length > 0 && !timelineDirty}
                 onChange={(event) => setAutoTiming(event.target.checked)}
               />
             </label>
@@ -1473,7 +2052,16 @@ function App() {
                 <strong>{subtitles ? "H.264 · caption render" : "Source stream"}</strong>
               </div>
               <div><span>Audio</span><strong>AAC · 192 kbps</strong></div>
-              <div><span>Timing</span><strong>{autoTiming ? "Auto spread" : "Compact"}</strong></div>
+              <div>
+                <span>Timing</span>
+                <strong>
+                  {timeline.length > 0 && !timelineDirty
+                    ? "Manual timeline"
+                    : autoTiming
+                      ? "Auto spread"
+                      : "Compact"}
+                </strong>
+              </div>
             </div>
           </section>
         </aside>
