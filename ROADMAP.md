@@ -27,6 +27,8 @@
 - [x] Mandarin sentence segmentation and automatic timeline planner.
 - [x] Automatic speech-rate fitting with a maximum-speed guard.
 - [x] Narration-aware smart ducking with FFmpeg sidechain compression.
+- [x] User-edited sentence timeline is accepted as a real render input.
+- [x] Per-segment timing validation, overlap protection and automatic fit-speed adjustment.
 
 ## Milestone 4 — Creator experience
 - [x] Progress events surfaced live in the UI.
@@ -45,12 +47,19 @@
 - [x] Repair-in-place runtime recovery using the existing data directory.
 - [x] Manual GitHub Actions workflow for reproducible unsigned Windows installer artifacts.
 - [x] Settings & diagnostics center for runtime, GPU, media tools and shortcuts.
+- [x] Secure local video preview with runtime-scoped asset access.
+- [x] Creator Timeline V1 with draggable narration segments, precise timing inputs and per-segment preview.
+- [x] Timeline persistence in autosave and native .vmagic project files.
+- [x] Persistent render history with reusable settings.
+- [x] Warm local AI worker across preview/render requests.
+- [ ] Waveform visualization and resize handles directly on timeline blocks.
+- [ ] Per-segment cached regeneration without re-synthesizing unchanged segments.
 - [ ] Windows code signing and auto-update.
 
 ## Later
 - [ ] GPT-SoVITS custom voices.
 - [ ] Dialect / character-style presets.
 - [ ] Automatic video understanding and script writing.
-- [ ] Full timeline editor.
+- [ ] Multi-track timeline editor (music/SFX/B-roll beyond the V1 narration track).
 - [ ] Cloud rendering option.
 - [ ] Publishing integrations.

@@ -144,6 +144,11 @@ fn remember_render(
                 .get("subtitles")
                 .and_then(|value| value.get("path"))
                 .cloned()
+                .unwrap_or(Value::Null),
+            "timeline": result
+                .get("narration")
+                .and_then(|value| value.get("timeline"))
+                .cloned()
                 .unwrap_or(Value::Null)
         }),
     );
@@ -992,6 +997,83 @@ async fn bootstrap_runtime(app: AppHandle, data_dir: String) -> Result<Value, St
 }
 
 #[tauri::command]
+fn allow_preview_file(app: AppHandle, path: String) -> Result<bool, String> {
+    let target = PathBuf::from(path.trim());
+    if !target.is_file() {
+        return Err("Selected preview video does not exist.".to_string());
+    }
+
+    app.asset_protocol_scope()
+        .allow_file(&target)
+        .map_err(|error| format!("Could not allow local video preview: {error}"))?;
+    Ok(true)
+}
+
+#[tauri::command]
+async fn probe_video_info(
+    app: AppHandle,
+    state: State<'_, EngineWorkerState>,
+    video_path: String,
+    device_mode: String,
+) -> Result<Value, String> {
+    let engine_state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let local = configured_runtime_home(&app)?
+            .ok_or_else(|| "Local AI runtime is not configured.".to_string())?;
+        run_persistent_engine_request(
+            None,
+            &engine_state,
+            None,
+            &local,
+            json!({
+                "id": "desktop-probe-video",
+                "method": "probe_video",
+                "params": {
+                    "videoPath": video_path
+                }
+            }),
+            device_mode.as_str(),
+            None,
+        )
+    })
+    .await
+    .map_err(|error| format!("Video probe task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn plan_narration_timeline(
+    app: AppHandle,
+    state: State<'_, EngineWorkerState>,
+    text: String,
+    target_duration: f64,
+    device_mode: String,
+) -> Result<Value, String> {
+    let engine_state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let local = configured_runtime_home(&app)?
+            .ok_or_else(|| "Local AI runtime is not configured.".to_string())?;
+        run_persistent_engine_request(
+            None,
+            &engine_state,
+            None,
+            &local,
+            json!({
+                "id": "desktop-plan-timeline",
+                "method": "plan_timeline",
+                "params": {
+                    "text": text,
+                    "targetDuration": target_duration
+                }
+            }),
+            device_mode.as_str(),
+            None,
+        )
+    })
+    .await
+    .map_err(|error| format!("Timeline planning task failed: {error}"))?
+}
+
+#[tauri::command]
 async fn preview_voice(
     app: AppHandle,
     state: State<'_, EngineWorkerState>,
@@ -1085,6 +1167,7 @@ fn render_video_sync(
     auto_timing: bool,
     subtitles: bool,
     device_mode: String,
+    timeline: Option<Value>,
 ) -> Result<Value, String> {
     let local = configured_runtime_home(&app)?
         .ok_or_else(|| "Local AI runtime is not configured. Run setup first.".to_string())?;
@@ -1106,6 +1189,7 @@ fn render_video_sync(
             "ducking": ducking,
             "autoTiming": auto_timing,
             "subtitles": subtitles,
+            "timeline": timeline,
             "outputPath": output_path
         }
     });
@@ -1150,6 +1234,7 @@ async fn render_video(
     auto_timing: bool,
     subtitles: bool,
     device_mode: String,
+    timeline: Option<Value>,
 ) -> Result<Value, String> {
     let task_state = state.inner().clone();
     let engine_state = engine.inner().clone();
@@ -1168,6 +1253,7 @@ async fn render_video(
             auto_timing,
             subtitles,
             device_mode,
+            timeline,
         )
     })
     .await
@@ -1239,6 +1325,9 @@ pub fn run() {
             save_project_file,
             load_project_file,
             bootstrap_runtime,
+            allow_preview_file,
+            probe_video_info,
+            plan_narration_timeline,
             preview_voice,
             render_video,
             cancel_render

@@ -8,7 +8,14 @@ from unittest.mock import patch
 import numpy as np
 
 from videomagic_engine.subtitles import write_srt
-from videomagic_engine.tts import SAMPLE_RATE, split_script, synthesize, synthesize_timed
+from videomagic_engine.tts import (
+    SAMPLE_RATE,
+    plan_timeline,
+    split_script,
+    synthesize,
+    synthesize_timed,
+    synthesize_timeline,
+)
 
 
 class TimingTests(unittest.TestCase):
@@ -75,6 +82,66 @@ class TimingTests(unittest.TestCase):
             self.assertTrue(output.exists())
             self.assertEqual(result["device"], "cpu")
             load_pipeline.assert_called_once_with("cpu")
+
+    def test_plan_timeline_builds_non_overlapping_draft(self) -> None:
+        result = plan_timeline(
+            "第一句比较短。第二句明显更长一点，需要更多时间。第三句。",
+            12.0,
+        )
+        timeline = result["timeline"]
+
+        self.assertEqual(len(timeline), 3)
+        self.assertTrue(result["draft"])
+        self.assertGreater(timeline[0]["start"], 0)
+        self.assertLessEqual(timeline[-1]["end"], 12.0)
+        self.assertGreater(timeline[1]["start"], timeline[0]["end"])
+        self.assertGreater(
+            timeline[1]["end"] - timeline[1]["start"],
+            timeline[0]["end"] - timeline[0]["start"],
+        )
+
+    def test_custom_timeline_places_audio_at_requested_start(self) -> None:
+        fake_audio = np.ones(int(SAMPLE_RATE * 0.7), dtype=np.float32) * 0.02
+        timeline = [
+            {"id": "a", "text": "第一句。", "start": 1.0, "end": 2.0},
+            {"id": "b", "text": "第二句。", "start": 3.0, "end": 4.0},
+        ]
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "custom.wav"
+            with (
+                patch("videomagic_engine.tts.get_pipeline", return_value=(object(), "cpu")),
+                patch("videomagic_engine.tts._generate_segment", return_value=fake_audio),
+            ):
+                result = synthesize_timeline(
+                    segments=timeline,
+                    output_path=output,
+                    target_duration=5.0,
+                    voice="zm_010",
+                    speed=1.0,
+                )
+
+            audio, sample_rate = __import__("soundfile").read(output)
+
+        self.assertEqual(sample_rate, SAMPLE_RATE)
+        self.assertAlmostEqual(len(audio) / SAMPLE_RATE, 5.0, places=2)
+        self.assertAlmostEqual(result["timeline"][0]["start"], 1.0, places=2)
+        self.assertAlmostEqual(result["timeline"][1]["start"], 3.0, places=2)
+        self.assertTrue(result["customTimeline"])
+
+    def test_custom_timeline_rejects_overlap(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "cannot overlap"):
+                synthesize_timeline(
+                    segments=[
+                        {"text": "第一句。", "start": 0.5, "end": 2.0},
+                        {"text": "第二句。", "start": 1.5, "end": 3.0},
+                    ],
+                    output_path=Path(directory) / "bad.wav",
+                    target_duration=4.0,
+                    voice="zm_010",
+                    speed=1.0,
+                )
 
     def test_auto_timing_can_raise_effective_speed(self) -> None:
         def fake_segment(_pipeline, _text: str, voice: str, speed: float) -> np.ndarray:
