@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import "./app.css";
@@ -12,9 +12,16 @@ type VoicePreset = {
 
 type RenderResult = {
   narrationPath?: string;
-  video?: {
-    path?: string;
-  };
+  video?: { path?: string };
+};
+
+type RuntimeStatus = {
+  ready: boolean;
+  portableReady: boolean;
+  developmentReady: boolean;
+  configured: boolean;
+  dataDir?: string | null;
+  message?: string;
 };
 
 const voices: VoicePreset[] = [
@@ -28,6 +35,10 @@ function fileName(path: string) {
   return path.split(/[\\/]/).pop() ?? path;
 }
 
+function dataDirectory(parent: string) {
+  return `${parent.replace(/[\\/]+$/, "")}\\VideoMagicData`;
+}
+
 function App() {
   const [videoPath, setVideoPath] = useState("");
   const [script, setScript] = useState("");
@@ -35,15 +46,69 @@ function App() {
   const [speed, setSpeed] = useState(1.05);
   const [originalVolume, setOriginalVolume] = useState(24);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isBootstrapping, setIsBootstrapping] = useState(false);
   const [status, setStatus] = useState("Ready");
   const [outputPath, setOutputPath] = useState("");
+  const [runtime, setRuntime] = useState<RuntimeStatus | null>(null);
 
   const selectedVoice = useMemo(
     () => voices.find((item) => item.id === voice) ?? voices[1],
     [voice],
   );
 
-  const canGenerate = Boolean(videoPath && script.trim().length > 0 && !isGenerating);
+  const canGenerate = Boolean(
+    runtime?.ready &&
+      videoPath &&
+      script.trim().length > 0 &&
+      !isGenerating &&
+      !isBootstrapping,
+  );
+
+  async function refreshRuntime() {
+    try {
+      const result = await invoke<RuntimeStatus>("runtime_status");
+      setRuntime(result);
+    } catch (error) {
+      setRuntime({
+        ready: false,
+        portableReady: false,
+        developmentReady: false,
+        configured: false,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  useEffect(() => {
+    void refreshRuntime();
+  }, []);
+
+  async function setupRuntime() {
+    const selected = await open({
+      multiple: false,
+      directory: true,
+      title: "Choose a drive or folder for VideoMagic AI data",
+    });
+
+    if (typeof selected !== "string") return;
+
+    const target = dataDirectory(selected);
+    setIsBootstrapping(true);
+    setStatus("Setting up local AI runtime. The first setup downloads several GB…");
+
+    try {
+      const result = await invoke<RuntimeStatus>("bootstrap_runtime", {
+        dataDir: target,
+      });
+      setRuntime(result);
+      setStatus("Local AI runtime ready");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+      await refreshRuntime();
+    } finally {
+      setIsBootstrapping(false);
+    }
+  }
 
   async function chooseVideo() {
     const selected = await open({
@@ -100,7 +165,10 @@ function App() {
             <span>Local AI commentary studio</span>
           </div>
         </div>
-        <div className="local-badge"><span /> Local first</div>
+        <div className={`local-badge ${runtime?.ready ? "ready" : ""}`}>
+          <span />
+          {runtime?.ready ? "AI runtime ready" : "Local first"}
+        </div>
       </header>
 
       <section className="hero">
@@ -170,6 +238,34 @@ function App() {
         </div>
 
         <aside className="panel settings-panel">
+          <div className={`runtime-card ${runtime?.portableReady ? "runtime-ready" : ""}`}>
+            <div className="runtime-copy">
+              <span className="runtime-kicker">LOCAL AI</span>
+              <strong>
+                {runtime?.portableReady
+                  ? "Portable runtime ready"
+                  : runtime?.developmentReady
+                    ? "Development runtime ready"
+                    : "AI runtime setup required"}
+              </strong>
+              <small>
+                {runtime?.dataDir
+                  ? runtime.dataDir
+                  : "Choose where models, Python and FFmpeg should live."}
+              </small>
+            </div>
+            {!runtime?.portableReady && (
+              <button
+                className="runtime-setup"
+                type="button"
+                disabled={isBootstrapping}
+                onClick={setupRuntime}
+              >
+                {isBootstrapping ? "Setting up…" : "Set up runtime"}
+              </button>
+            )}
+          </div>
+
           <div className="panel-heading">
             <div>
               <span className="step">03</span>

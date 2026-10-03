@@ -30,6 +30,11 @@
     "targets": ["nsis", "msi"],
     "shortDescription": "Local AI commentary studio",
     "longDescription": "Create AI-narrated videos locally with VideoMagic.",
+    "resources": {
+      "../scripts/windows-bootstrap.ps1": "bootstrap/windows-bootstrap.ps1",
+      "../engine/pyproject.toml": "engine/pyproject.toml",
+      "../engine/videomagic_engine/*.py": "engine/videomagic_engine/"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

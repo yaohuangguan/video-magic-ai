@@ -42,19 +42,19 @@ See `docs/engine-protocol.md`.
 
 ## Verified on Windows
 
-Verified on the development PC:
+Verified on the Windows development PC:
 
-- Python 3.11.9
-- PyTorch 2.11.0 + CUDA 12.8
-- NVIDIA RTX 2080 SUPER
-- Kokoro 0.9.4 + Misaki Chinese frontend
-- FFmpeg / FFprobe
-- Tauri 2 release build
-- NSIS installer build
-- Mandarin text -> WAV
-- video + Mandarin script -> mixed MP4
+- managed Python 3.11.17 installed by VideoMagic bootstrap;
+- PyTorch 2.11.0 + CUDA 12.8;
+- NVIDIA RTX 2080 SUPER;
+- Kokoro 0.9.4 + Misaki Chinese frontend;
+- app-local FFmpeg / FFprobe;
+- Tauri 2 release build and NSIS installer;
+- installer resources for bootstrap + Python engine;
+- Mandarin text -> WAV;
+- video + Mandarin script -> mixed MP4 using only the portable runtime.
 
-A real 12-second end-to-end render has been completed successfully with CUDA TTS and FFmpeg mixing.
+A real 12-second end-to-end render has been completed from the bootstrapped runtime without using the development venv or system FFmpeg.
 
 ## Local storage
 
@@ -67,7 +67,12 @@ E:\Coding\videomagic-data
 ├── exports
 ├── models
 ├── outputs
-└── tmp
+├── runtime
+│   ├── python
+│   └── venv
+├── tmp
+└── tools
+    └── ffmpeg
 ```
 
 The engine also supports:
@@ -109,13 +114,20 @@ Windows desktop development also requires Rust, MSVC Build Tools, the Windows SD
 
 The local Python engine currently uses a project venv during development. This is intentionally not committed.
 
-## Current release blocker
+## First-run runtime bootstrap
 
-The generated NSIS installer currently packages the Tauri desktop shell, but it does **not yet package or bootstrap the full Python/PyTorch/Kokoro runtime**.
+The NSIS installer stays small and ships the desktop shell, bootstrap script, and VideoMagic Python engine source. On first setup, the user chooses a parent folder for heavy AI data.
 
-That means the current installer is a development artifact, not yet a standalone installer for a clean Windows PC.
+VideoMagic then installs into that data directory:
 
-The next release milestone is a first-run runtime bootstrap (or packaged sidecar) that installs/downloads the local AI runtime into the user's chosen data directory without requiring a preinstalled Python environment.
+- uv and a managed Python 3.11 runtime;
+- a dedicated Python venv;
+- CUDA PyTorch when NVIDIA is available, otherwise the CPU wheel;
+- Kokoro / Misaki and the VideoMagic engine;
+- FFmpeg / FFprobe;
+- Hugging Face, Torch, pip, Python and temporary caches.
+
+The bootstrap has been verified end to end on Windows and the installed NSIS resources have been used successfully. The remaining release check is a true clean-machine/VM test plus better visible setup progress and recovery UX.
 
 ## Product principles
 

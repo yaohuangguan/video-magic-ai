@@ -1,10 +1,22 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
+
+
+def _media_tool(name: str) -> str | None:
+    home = os.environ.get("VIDEOMAGIC_HOME")
+    if home:
+        executable = f"{name}.exe" if os.name == "nt" else name
+        local = Path(home) / "tools" / "ffmpeg" / "bin" / executable
+        if local.exists():
+            return str(local)
+
+    return shutil.which(name)
 
 
 def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -20,7 +32,7 @@ def _run(command: list[str]) -> subprocess.CompletedProcess[str]:
 
 
 def probe_video(video_path: str | Path) -> dict[str, Any]:
-    ffprobe = shutil.which("ffprobe")
+    ffprobe = _media_tool("ffprobe")
     if not ffprobe:
         raise RuntimeError("ffprobe was not found in PATH.")
 
@@ -54,7 +66,7 @@ def mix_voiceover(
     output_path: str | Path,
     original_volume: float = 0.24,
 ) -> dict[str, Any]:
-    ffmpeg = shutil.which("ffmpeg")
+    ffmpeg = _media_tool("ffmpeg")
     if not ffmpeg:
         raise RuntimeError("ffmpeg was not found in PATH.")
 

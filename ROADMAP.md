@@ -13,7 +13,9 @@
 - [x] Kokoro Mandarin fixed voices.
 - [x] Mandarin script -> WAV without a cloud TTS API.
 - [x] Model/cache paths moved off C drive on the dev PC.
-- [ ] Standalone runtime bootstrap for a clean Windows machine.
+- [x] Standalone first-run runtime bootstrap with managed Python, Torch, Kokoro and FFmpeg.
+- [x] Portable runtime verified from E: without the development venv or system FFmpeg.
+- [ ] Clean-machine / VM validation of the installer bootstrap.
 - [ ] GPT-SoVITS adapter for custom voice cloning / stronger style voices.
 
 ## Milestone 3 — Video render
@@ -34,7 +36,8 @@
 - [ ] Voice preview before render.
 - [ ] Preset management.
 - [ ] Hardware fallback / CPU mode.
-- [ ] First-run model/runtime download UI.
+- [x] First-run runtime setup UI with user-selected storage location.
+- [ ] Live setup-stage progress and retry/recovery UX.
 
 ## Later
 - [ ] GPT-SoVITS custom voices.
