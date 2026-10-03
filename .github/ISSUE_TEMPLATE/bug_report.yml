@@ -7,28 +7,30 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping improve VideoMagic. Please avoid uploading private source videos unless they are safe to share publicly.
-
-  - type: textarea
-    id: summary
+        Thanks for helping improve VideoMagic. Please remove private media, paths, tokens, and personal data before posting logs or screenshots.
+  - type: input
+    id: version
     attributes:
-      label: What happened?
-      description: Describe the problem and what you expected instead.
-      placeholder: "I imported a video, built a timeline, then..."
+      label: VideoMagic version
+      description: The version shown in the app or GitHub Release.
+      placeholder: v0.1.2
     validations:
       required: true
-
-  - type: textarea
-    id: reproduce
+  - type: dropdown
+    id: area
     attributes:
-      label: Steps to reproduce
-      placeholder: |
-        1. Open VideoMagic
-        2. Import ...
-        3. Click ...
+      label: Area
+      options:
+        - Install / first-run setup
+        - Video import / preview
+        - Voice generation
+        - Timeline / waveform
+        - Subtitles / ducking
+        - Render / export
+        - Project files / history
+        - Other
     validations:
       required: true
-
   - type: dropdown
     id: inference
     attributes:
@@ -37,39 +39,43 @@ body:
         - Auto
         - GPU / CUDA
         - CPU
-        - Not relevant
+        - Not applicable
     validations:
       required: true
-
-  - type: input
-    id: version
+  - type: textarea
+    id: steps
     attributes:
-      label: VideoMagic version
-      placeholder: "e.g. v0.1.1"
+      label: Steps to reproduce
+      placeholder: |
+        1. Open...
+        2. Import...
+        3. Click...
     validations:
       required: true
-
-  - type: input
-    id: windows
+  - type: textarea
+    id: expected
     attributes:
-      label: Windows version
-      placeholder: "e.g. Windows 11 24H2"
+      label: Expected behavior
     validations:
       required: true
-
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
   - type: textarea
     id: diagnostics
     attributes:
-      label: Diagnostics / logs
-      description: Paste relevant Settings & diagnostics output or render error text. Remove sensitive file paths if needed.
+      label: Diagnostics
+      description: Paste only non-sensitive diagnostics or relevant log excerpts.
       render: text
-
   - type: checkboxes
-    id: checklist
+    id: checks
     attributes:
       label: Checklist
       options:
         - label: I checked existing issues for the same problem.
           required: true
-        - label: I understand public issues are visible to everyone.
+        - label: I removed private media, credentials, tokens, and personal information.
           required: true

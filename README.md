@@ -2,7 +2,7 @@
 
 Local-first AI commentary studio for turning a source video and narration script into a finished voiceover video.
 
-[Website](https://videomagic.pages.dev/) · [Download Windows](https://github.com/yaohuangguan/video-magic-ai/releases/latest/download/VideoMagic-Windows-x64-setup.exe) · [Releases](https://github.com/yaohuangguan/video-magic-ai/releases) · [Roadmap](ROADMAP.md)
+[Website](https://videomagic.pages.dev/) · [Download Windows](https://github.com/yaohuangguan/video-magic-ai/releases/latest/download/VideoMagic-Windows-x64-setup.exe) · [Releases](https://github.com/yaohuangguan/video-magic-ai/releases) · [Roadmap](ROADMAP.md) · [Support](SUPPORT.md)
 
 ![Windows CI](https://github.com/yaohuangguan/video-magic-ai/actions/workflows/windows-ci.yml/badge.svg)
 ![Latest Release](https://img.shields.io/github/v/release/yaohuangguan/video-magic-ai?display_name=tag)
