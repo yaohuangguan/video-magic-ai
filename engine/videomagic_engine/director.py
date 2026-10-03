@@ -54,11 +54,11 @@ def _load_model() -> tuple[Any, Any]:
         return _model, _processor
 
     import torch
-    from transformers import AutoModelForImageTextToText, AutoProcessor
+    from transformers import AutoModelForMultimodalLM, AutoProcessor
 
     processor = AutoProcessor.from_pretrained(selected_model)
     dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-    model = AutoModelForImageTextToText.from_pretrained(
+    model = AutoModelForMultimodalLM.from_pretrained(
         selected_model,
         torch_dtype=dtype,
         device_map="auto",
@@ -247,7 +247,7 @@ def plan_video_edit(
         {
             "role": "user",
             "content": [
-                {"type": "video", "url": str(video)},
+                {"type": "video", "video": str(video)},
                 {
                     "type": "text",
                     "text": build_director_prompt(
@@ -261,24 +261,16 @@ def plan_video_edit(
         }
     ]
 
-    frame_budget = min(96, max(24, int(math.ceil(source_duration))))
-    downsample_mode = "16x"
     inputs = processor.apply_chat_template(
         messages,
         tokenize=True,
         add_generation_prompt=True,
         return_dict=True,
         return_tensors="pt",
-        downsample_mode=downsample_mode,
-        max_num_frames=frame_budget,
-        stack_frames=1,
-        max_slice_nums=1,
-        use_image_id=False,
     ).to(model.device)
 
     generated_ids = model.generate(
         **inputs,
-        downsample_mode=downsample_mode,
         max_new_tokens=1800,
         do_sample=False,
     )

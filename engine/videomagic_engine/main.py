@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from .director import intelligence_status, plan_video_edit
+from .director import intelligence_status, plan_video_edit, release_video_model
 from .media import mix_voiceover, probe_video, render_edit_plan, waveform_peaks
 from .subtitles import write_srt
 from .tts import plan_timeline, synthesize, synthesize_timed, synthesize_timeline
@@ -146,14 +146,17 @@ def handle(message: dict[str, Any], request_id: str | None) -> Any:
             0.04,
             "Loading local Video AI model and understanding the source video",
         )
-        plan = plan_video_edit(
-            video_path=video_path,
-            instruction=instruction,
-            target_duration=float(target_duration) if target_duration else None,
-            narration_language=narration_language,
-        )
-        emit_progress(request_id, "analyze", 1.0, "AI edit plan ready")
-        return plan
+        try:
+            plan = plan_video_edit(
+                video_path=video_path,
+                instruction=instruction,
+                target_duration=float(target_duration) if target_duration else None,
+                narration_language=narration_language,
+            )
+            emit_progress(request_id, "analyze", 1.0, "AI edit plan ready")
+            return plan
+        finally:
+            release_video_model()
 
     if method == "ai_edit":
         video_path = params["videoPath"]
@@ -168,12 +171,15 @@ def handle(message: dict[str, Any], request_id: str | None) -> Any:
             0.04,
             "Loading local Video AI model and understanding the source video",
         )
-        plan = plan_video_edit(
-            video_path=video_path,
-            instruction=instruction,
-            target_duration=float(target_duration) if target_duration else None,
-            narration_language=narration_language,
-        )
+        try:
+            plan = plan_video_edit(
+                video_path=video_path,
+                instruction=instruction,
+                target_duration=float(target_duration) if target_duration else None,
+                narration_language=narration_language,
+            )
+        finally:
+            release_video_model()
 
         emit_progress(request_id, "edit", 0.40, "Cutting selected source moments")
         roughcut_path = _default_output("ai-roughcut.mp4")
