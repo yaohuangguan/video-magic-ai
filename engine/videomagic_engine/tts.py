@@ -8,13 +8,10 @@ from typing import Any
 import numpy as np
 import soundfile as sf
 
-from .voices import DEFAULT_VOICE, VOICE_IDS
+from .voices import DEFAULT_VOICE, VOICE_IDS, voice_lang_code, voice_language, voice_repo_id
 
 SAMPLE_RATE = 24000
-REPO_ID = "hexgrad/Kokoro-82M-v1.1-zh"
-
-_pipeline: Any = None
-_pipeline_device: str | None = None
+_pipelines: dict[tuple[str, str, str], Any] = {}
 
 
 def _resolve_device() -> str:
@@ -47,22 +44,24 @@ def _configure_text_cache() -> None:
         pass
 
 
-def _load_pipeline(device: str) -> tuple[Any, str]:
-    global _pipeline, _pipeline_device
-
-    if _pipeline is not None and _pipeline_device == device:
-        return _pipeline, device
-
+def _load_pipeline(device: str, voice: str = DEFAULT_VOICE) -> tuple[Any, str]:
     _configure_text_cache()
     from kokoro import KPipeline
 
-    _pipeline = KPipeline(
-        lang_code="z",
-        repo_id=REPO_ID,
-        device=device,
-    )
-    _pipeline_device = device
-    return _pipeline, device
+    lang_code = voice_lang_code(voice)
+    repo_id = voice_repo_id(voice)
+    key = (device, lang_code, repo_id)
+    pipeline = _pipelines.get(key)
+
+    if pipeline is None:
+        pipeline = KPipeline(
+            lang_code=lang_code,
+            repo_id=repo_id,
+            device=device,
+        )
+        _pipelines[key] = pipeline
+
+    return pipeline, device
 
 
 def _auto_fallback_allowed(device: str) -> bool:
@@ -70,25 +69,32 @@ def _auto_fallback_allowed(device: str) -> bool:
     return device == "cuda" and forced != "cuda"
 
 
-def get_pipeline() -> tuple[Any, str]:
+def get_pipeline(voice: str = DEFAULT_VOICE) -> tuple[Any, str]:
     device = _resolve_device()
 
     try:
-        return _load_pipeline(device)
+        return _load_pipeline(device, voice)
     except Exception:
         if not _auto_fallback_allowed(device):
             raise
-        return _load_pipeline("cpu")
+        return _load_pipeline("cpu", voice)
 
 
-def split_script(text: str) -> list[str]:
-    clean = re.sub(r"\s+", " ", text.strip())
+def split_script(text: str, language: str | None = None) -> list[str]:
+    clean = text.strip()
     if not clean:
         return []
 
-    pieces = re.split(r"(?<=[。！？!?；;])\s*|\n+", clean)
+    clean = re.sub(r"[ \t]+", " ", clean)
+    clean = re.sub(r"\n{2,}", "\n", clean)
+
+    if language and language.lower().startswith("en"):
+        pieces = re.split(r"(?<=[.!?;])(?:\s+|\n+)", clean)
+    else:
+        pieces = re.split(r"(?<=[。！？!?；;])(?:\s*|\n+)", clean)
+
     segments = [piece.strip() for piece in pieces if piece.strip()]
-    return segments or [clean]
+    return segments or [re.sub(r"\s+", " ", clean)]
 
 
 def _generate_segment(
@@ -133,8 +139,9 @@ def synthesize(
     speed: float = 1.0,
 ) -> dict[str, Any]:
     clean_text = _validate(text, voice, speed)
-    pipeline, device = get_pipeline()
-    segments = split_script(clean_text)
+    pipeline, device = get_pipeline(voice)
+    language = voice_language(voice)
+    segments = split_script(clean_text, language)
 
     try:
         generated = [
@@ -144,7 +151,7 @@ def synthesize(
     except Exception:
         if not _auto_fallback_allowed(device):
             raise
-        pipeline, device = _load_pipeline("cpu")
+        pipeline, device = _load_pipeline("cpu", voice)
         generated = [
             _generate_segment(pipeline, segment, voice=voice, speed=speed)
             for segment in segments
@@ -178,7 +185,8 @@ def synthesize(
         "voice": voice,
         "speed": speed,
         "device": device,
-        "model": REPO_ID,
+        "model": voice_repo_id(voice),
+        "language": voice_language(voice),
         "timeline": timeline,
         "autoTiming": False,
     }
@@ -195,8 +203,9 @@ def synthesize_timed(
     if target_duration <= 0.5:
         raise ValueError("Video is too short for automatic narration timing.")
 
-    pipeline, device = get_pipeline()
-    segments = split_script(clean_text)
+    pipeline, device = get_pipeline(voice)
+    language = voice_language(voice)
+    segments = split_script(clean_text, language)
 
     def generate(at_speed: float) -> list[np.ndarray]:
         nonlocal pipeline, device
@@ -208,7 +217,7 @@ def synthesize_timed(
         except Exception:
             if not _auto_fallback_allowed(device):
                 raise
-            pipeline, device = _load_pipeline("cpu")
+            pipeline, device = _load_pipeline("cpu", voice)
             return [
                 _generate_segment(pipeline, segment, voice=voice, speed=at_speed)
                 for segment in segments
@@ -283,20 +292,25 @@ def synthesize_timed(
         "speed": effective_speed,
         "requestedSpeed": speed,
         "device": device,
-        "model": REPO_ID,
+        "model": voice_repo_id(voice),
+        "language": voice_language(voice),
         "timeline": timeline,
         "autoTiming": True,
     }
 
 
-def plan_timeline(text: str, target_duration: float) -> dict[str, Any]:
+def plan_timeline(
+    text: str,
+    target_duration: float,
+    voice: str = DEFAULT_VOICE,
+) -> dict[str, Any]:
     clean_text = text.strip()
     if not clean_text:
         raise ValueError("Narration text is empty.")
     if target_duration <= 0.5:
         raise ValueError("Video is too short to build a narration timeline.")
 
-    segments = split_script(clean_text)
+    segments = split_script(clean_text, voice_language(voice))
     count = len(segments)
     if not count:
         raise ValueError("Narration text produced no timeline segments.")
@@ -397,7 +411,7 @@ def synthesize_timeline(
         )
         previous_end = end
 
-    pipeline, device = get_pipeline()
+    pipeline, device = get_pipeline(voice)
 
     def generate_segment_audio(text: str, at_speed: float) -> np.ndarray:
         nonlocal pipeline, device
@@ -406,7 +420,7 @@ def synthesize_timeline(
         except Exception:
             if not _auto_fallback_allowed(device):
                 raise
-            pipeline, device = _load_pipeline("cpu")
+            pipeline, device = _load_pipeline("cpu", voice)
             return _generate_segment(pipeline, text, voice=voice, speed=at_speed)
 
     target_samples = int(target_duration * SAMPLE_RATE)
@@ -482,7 +496,8 @@ def synthesize_timeline(
         "voice": voice,
         "speed": speed,
         "device": device,
-        "model": REPO_ID,
+        "model": voice_repo_id(voice),
+        "language": voice_language(voice),
         "timeline": timeline,
         "autoTiming": False,
         "customTimeline": True,

@@ -10,6 +10,8 @@ type VoicePreset = {
   name: string;
   description: string;
   tag: string;
+  language: "zh" | "en-US" | "en-GB";
+  languageLabel: string;
 };
 
 type InferenceMode = "auto" | "cuda" | "cpu";
@@ -46,6 +48,27 @@ type WaveformResult = {
   points: number;
   durationSeconds: number;
   hasAudio: boolean;
+};
+
+type AiEditClip = {
+  id: string;
+  sourceStart: number;
+  sourceEnd: number;
+  speed: number;
+  outputStart: number;
+  outputEnd: number;
+  narration: string;
+  reason: string;
+};
+
+type AiEditPlan = {
+  title: string;
+  summary: string;
+  narrationLanguage: "zh" | "en";
+  sourceDurationSeconds: number;
+  outputDurationSeconds: number;
+  clips: AiEditClip[];
+  model: string;
 };
 
 type RecentProject = {
@@ -89,6 +112,7 @@ type CreatorPreset = {
 
 type RenderResult = {
   narrationPath?: string;
+  editPlan?: AiEditPlan;
   video?: {
     path?: string;
     videoDurationSeconds?: number;
@@ -123,6 +147,13 @@ type RuntimeDiagnostics = {
     ffprobe?: string | null;
     kokoroInstalled?: boolean;
     videomagicHome?: string | null;
+    videoIntelligence?: {
+      provider?: string;
+      model?: string;
+      dependenciesInstalled?: boolean;
+      modelCached?: boolean;
+      cachePath?: string | null;
+    };
     error?: string;
     gpu?: {
       cudaAvailable?: boolean;
@@ -205,10 +236,16 @@ const builtinPresets: CreatorPreset[] = [
 ];
 
 const voices: VoicePreset[] = [
-  { id: "zm_009", name: "Punchy Male", description: "Sharper pacing for commentary and short-form clips.", tag: "Fast" },
-  { id: "zm_010", name: "Story Male", description: "Natural Mandarin narration with a balanced tone.", tag: "Story" },
-  { id: "zm_011", name: "Deep Male", description: "Steadier voice for explainers and documentary content.", tag: "Deep" },
-  { id: "zf_001", name: "Bright Female", description: "Clear, lighter delivery for lifestyle and social clips.", tag: "Bright" },
+  { id: "zm_009", name: "Punchy Male", description: "Sharper pacing for commentary and short-form clips.", tag: "Fast", language: "zh", languageLabel: "Mandarin" },
+  { id: "zm_010", name: "Story Male", description: "Natural Mandarin narration with a balanced tone.", tag: "Story", language: "zh", languageLabel: "Mandarin" },
+  { id: "zm_011", name: "Deep Male", description: "Steadier voice for explainers and documentary content.", tag: "Deep", language: "zh", languageLabel: "Mandarin" },
+  { id: "zf_001", name: "Bright Female", description: "Clear, lighter delivery for lifestyle and social clips.", tag: "Bright", language: "zh", languageLabel: "Mandarin" },
+  { id: "af_heart", name: "Heart", description: "Warm American English narration.", tag: "US · Warm", language: "en-US", languageLabel: "English (US)" },
+  { id: "af_bella", name: "Bella", description: "Expressive American English creator voice.", tag: "US · Expressive", language: "en-US", languageLabel: "English (US)" },
+  { id: "am_michael", name: "Michael", description: "Clean American English male narration.", tag: "US · Clear", language: "en-US", languageLabel: "English (US)" },
+  { id: "am_puck", name: "Puck", description: "Energetic American English for short-form edits.", tag: "US · Energy", language: "en-US", languageLabel: "English (US)" },
+  { id: "bf_emma", name: "Emma", description: "Warm British English female narration.", tag: "UK · Warm", language: "en-GB", languageLabel: "English (UK)" },
+  { id: "bm_george", name: "George", description: "Classic British English male narration.", tag: "UK · Classic", language: "en-GB", languageLabel: "English (UK)" },
 ];
 
 function fileName(path: string) {
@@ -243,6 +280,9 @@ function App() {
   const [selectedSegmentId, setSelectedSegmentId] = useState("");
   const [currentTime, setCurrentTime] = useState(0);
   const [script, setScript] = useState("");
+  const [aiInstruction, setAiInstruction] = useState("");
+  const [aiTargetDuration, setAiTargetDuration] = useState("auto");
+  const [lastAiPlan, setLastAiPlan] = useState<AiEditPlan | null>(null);
   const [voice, setVoice] = useState(voices[1].id);
   const [speed, setSpeed] = useState(1.05);
   const [originalVolume, setOriginalVolume] = useState(42);
@@ -287,6 +327,14 @@ function App() {
     runtime?.ready &&
       videoPath &&
       script.trim().length > 0 &&
+      !isGenerating &&
+      !isBootstrapping,
+  );
+
+  const canAiEdit = Boolean(
+    runtime?.ready &&
+      videoPath &&
+      aiInstruction.trim().length > 0 &&
       !isGenerating &&
       !isBootstrapping,
   );
@@ -639,6 +687,7 @@ function App() {
     setWaveform([]);
     setWaveformLoading(false);
     setOutputPath("");
+    setLastAiPlan(null);
     setRenderProgress(0);
     setRenderStage("idle");
     setCurrentTime(0);
@@ -656,6 +705,7 @@ function App() {
       const result = await invoke<TimelinePlan>("plan_narration_timeline", {
         text: script.trim(),
         targetDuration: videoInfo.durationSeconds,
+        voice,
         deviceMode,
       });
       setTimeline(result.timeline);
@@ -916,6 +966,60 @@ function App() {
       setEngineWarm(false);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function runAiEdit() {
+    if (!canAiEdit) return;
+
+    const selectedVoice = voices.find((item) => item.id === voice);
+    const narrationLanguage =
+      selectedVoice?.language.startsWith("en") ? "en" : "zh";
+    const targetDuration =
+      aiTargetDuration === "auto" ? null : Number(aiTargetDuration);
+
+    setIsGenerating(true);
+    setOutputPath("");
+    setLastAiPlan(null);
+    setRenderProgress(0.02);
+    setRenderStage("analyze");
+    setStatus("Video AI is understanding the source…");
+
+    try {
+      const result = await invoke<RenderResult>("ai_edit_video", {
+        videoPath,
+        instruction: aiInstruction.trim(),
+        voice,
+        speed,
+        originalVolume: originalVolume / 100,
+        outputDir: outputDir || null,
+        ducking,
+        subtitles,
+        deviceMode,
+        targetDuration,
+        narrationLanguage,
+      });
+
+      const rendered = result.video?.path ?? "";
+      setOutputPath(rendered);
+      setLastAiPlan(result.editPlan ?? null);
+      setRenderProgress(1);
+      setRenderStage("done");
+      setEngineWarm(true);
+      setStatus(rendered ? "AI edit ready" : "AI edit completed");
+      await refreshRenderHistory();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.toLowerCase().includes("cancel")) {
+        setRenderStage("cancelled");
+        setRenderProgress(0);
+        setStatus("AI edit cancelled");
+      } else {
+        setRenderStage("error");
+        setStatus(message);
+      }
+    } finally {
+      setIsGenerating(false);
     }
   }
 
@@ -1226,6 +1330,9 @@ function App() {
     setSelectedSegmentId("");
     setCurrentTime(0);
     setScript("");
+    setAiInstruction("");
+    setAiTargetDuration("auto");
+    setLastAiPlan(null);
     setOutputPath("");
     setRenderProgress(0);
     setRenderStage("idle");
@@ -1388,8 +1495,8 @@ function App() {
                 : "UNTITLED PROJECT"}
             {lastSavedAt ? (projectFilePath ? " · SAVED" : " · AUTOSAVED") : ""}
           </span>
-          <h1>Create voiceover video</h1>
-          <p>Import a clip, write the narration, choose a voice, then render locally.</p>
+          <h1>Create or AI-edit a video</h1>
+          <p>Drop in a clip. Write narration yourself, or describe the finished edit you want.</p>
         </div>
         <div className="privacy-note">
           <strong>100% local core workflow</strong>
@@ -1480,6 +1587,99 @@ function App() {
             )}
           </section>
 
+          <section className="workspace-card ai-director-card">
+            <div className="section-heading">
+              <div>
+                <span className="section-index">AI</span>
+                <div>
+                  <h2>AI Director</h2>
+                  <p>Describe the edit you want. Local Video AI chooses the moments and cuts them.</p>
+                </div>
+              </div>
+              <span className="local-ai-badge">MiniCPM-V 4.6 · Local</span>
+            </div>
+
+            <textarea
+              className="ai-director-input"
+              value={aiInstruction}
+              onChange={(event) => setAiInstruction(event.target.value)}
+              placeholder="例：剪成 30 秒搞笑短视频，开头直接进高潮，保留最离谱的反应，英文旁白，节奏快一点。"
+            />
+
+            <div className="ai-director-controls">
+              <label>
+                <span>Target length</span>
+                <select
+                  value={aiTargetDuration}
+                  onChange={(event) => setAiTargetDuration(event.target.value)}
+                >
+                  <option value="auto">Auto</option>
+                  <option value="15">15 sec</option>
+                  <option value="30">30 sec</option>
+                  <option value="60">60 sec</option>
+                </select>
+              </label>
+
+              <div className="ai-director-language">
+                <span>Narration</span>
+                <strong>
+                  {voices.find((item) => item.id === voice)?.languageLabel ?? "Mandarin"}
+                </strong>
+                <small>Change the selected voice to switch language.</small>
+              </div>
+
+              <button
+                className="ai-edit-button"
+                type="button"
+                disabled={!canAiEdit}
+                onClick={() => void runAiEdit()}
+              >
+                {isGenerating && renderStage === "analyze"
+                  ? "Analyzing video…"
+                  : "Analyze & Edit"}
+              </button>
+            </div>
+
+            <div className="ai-director-note">
+              <span>Local-only</span>
+              <p>
+                The first AI edit downloads the open-source Video AI model once to your
+                selected VideoMagic data drive. Source video is analyzed locally.
+              </p>
+            </div>
+
+            {lastAiPlan && (
+              <div className="ai-plan-result">
+                <div className="ai-plan-summary">
+                  <div>
+                    <span>AI EDIT PLAN</span>
+                    <strong>{lastAiPlan.title}</strong>
+                    <p>{lastAiPlan.summary || "Edit plan generated from the source video."}</p>
+                  </div>
+                  <div className="ai-plan-metrics">
+                    <strong>{lastAiPlan.clips.length} clips</strong>
+                    <span>{formatTime(lastAiPlan.outputDurationSeconds)}</span>
+                  </div>
+                </div>
+
+                <div className="ai-plan-clips">
+                  {lastAiPlan.clips.map((clip, index) => (
+                    <div className="ai-plan-clip" key={clip.id}>
+                      <span>{String(index + 1).padStart(2, "0")}</span>
+                      <div>
+                        <strong>
+                          {formatTime(clip.sourceStart)} → {formatTime(clip.sourceEnd)}
+                          {clip.speed !== 1 ? " · " + clip.speed.toFixed(2) + "×" : ""}
+                        </strong>
+                        <p>{clip.narration || clip.reason || "Selected visual moment"}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
+
           <section className="workspace-card script-card">
             <div className="section-heading">
               <div>
@@ -1503,7 +1703,9 @@ function App() {
             />
 
             <div className="script-tools">
-              <span>Mandarin punctuation and natural pauses are supported.</span>
+              <span>
+                {voices.find((item) => item.id === voice)?.languageLabel ?? "Narration"} punctuation and natural pauses are supported.
+              </span>
               <button
                 className="preview-button"
                 type="button"
@@ -2086,7 +2288,7 @@ function App() {
                   <div className="voice-avatar">{item.name.slice(0, 1)}</div>
                   <div className="voice-copy">
                     <strong>{item.name}</strong>
-                    <span>{item.description}</span>
+                    <span>{item.languageLabel} · {item.description}</span>
                   </div>
                   <em>{item.tag}</em>
                 </button>
@@ -2329,6 +2531,20 @@ function App() {
                   <div>
                     <span>Kokoro</span>
                     <strong>{diagnostics?.engine?.kokoroInstalled ? "Installed" : "Not detected"}</strong>
+                  </div>
+                  <div>
+                    <span>Video AI</span>
+                    <strong>
+                      {diagnostics?.engine?.videoIntelligence?.dependenciesInstalled
+                        ? diagnostics.engine.videoIntelligence.modelCached
+                          ? "Ready"
+                          : "Downloads on first use"
+                        : "Dependencies missing"}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Video model</span>
+                    <strong>{diagnostics?.engine?.videoIntelligence?.model ?? "—"}</strong>
                   </div>
                 </div>
               </section>

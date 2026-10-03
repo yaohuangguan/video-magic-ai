@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import numpy as np
 
+from videomagic_engine.director import normalize_edit_plan
 from videomagic_engine.subtitles import write_srt
 from videomagic_engine.tts import (
     SAMPLE_RATE,
@@ -25,6 +26,27 @@ class TimingTests(unittest.TestCase):
             split_script(text),
             ["第一句。", "第二句！", "第三句？", "最后一句"],
         )
+
+    def test_split_script_uses_english_sentence_boundaries(self) -> None:
+        text = "First sentence. Second sentence! Is this third? Final line."
+        self.assertEqual(
+            split_script(text, "en-US"),
+            [
+                "First sentence.",
+                "Second sentence!",
+                "Is this third?",
+                "Final line.",
+            ],
+        )
+
+    def test_english_timeline_uses_selected_voice_language(self) -> None:
+        result = plan_timeline(
+            "Start with the reveal. Then show the reaction! Finish on the punchline.",
+            12.0,
+            voice="af_heart",
+        )
+        self.assertEqual(len(result["timeline"]), 3)
+        self.assertEqual(result["timeline"][0]["text"], "Start with the reveal.")
 
     def test_auto_timing_spreads_sentences_across_target_duration(self) -> None:
         def fake_segment(_pipeline, text: str, voice: str, speed: float) -> np.ndarray:
@@ -165,6 +187,51 @@ class TimingTests(unittest.TestCase):
             self.assertGreater(result["speed"], 1.0)
             self.assertLessEqual(result["speed"], 1.6)
             self.assertAlmostEqual(result["durationSeconds"], 4.0, places=2)
+
+
+class DirectorPlanTests(unittest.TestCase):
+    def test_normalize_edit_plan_clamps_ranges_and_builds_output_timeline(self) -> None:
+        result = normalize_edit_plan(
+            {
+                "title": "Fast cut",
+                "summary": "Keep the reveal and reaction.",
+                "narrationLanguage": "en",
+                "clips": [
+                    {
+                        "sourceStart": -2,
+                        "sourceEnd": 3,
+                        "speed": 1.5,
+                        "narration": "Watch what happens next.",
+                    },
+                    {
+                        "sourceStart": 8,
+                        "sourceEnd": 20,
+                        "speed": 4,
+                        "narration": "And this is the reaction.",
+                    },
+                ],
+            },
+            source_duration=10.0,
+        )
+
+        self.assertEqual(result["narrationLanguage"], "en")
+        self.assertEqual(len(result["clips"]), 2)
+        self.assertEqual(result["clips"][0]["sourceStart"], 0.0)
+        self.assertEqual(result["clips"][1]["sourceEnd"], 10.0)
+        self.assertEqual(result["clips"][1]["speed"], 2.0)
+        self.assertAlmostEqual(
+            result["clips"][1]["outputStart"],
+            result["clips"][0]["outputEnd"],
+            places=3,
+        )
+        self.assertGreater(result["outputDurationSeconds"], 0)
+
+    def test_normalize_edit_plan_rejects_empty_clip_list(self) -> None:
+        with self.assertRaisesRegex(ValueError, "no clips"):
+            normalize_edit_plan(
+                {"narrationLanguage": "zh", "clips": []},
+                source_duration=10.0,
+            )
 
 
 class SubtitleTests(unittest.TestCase):

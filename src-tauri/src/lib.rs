@@ -149,7 +149,8 @@ fn remember_render(
                 .get("narration")
                 .and_then(|value| value.get("timeline"))
                 .cloned()
-                .unwrap_or(Value::Null)
+                .unwrap_or(Value::Null),
+            "editPlan": result.get("editPlan").cloned().unwrap_or(Value::Null)
         }),
     );
 
@@ -1079,6 +1080,7 @@ async fn plan_narration_timeline(
     state: State<'_, EngineWorkerState>,
     text: String,
     target_duration: f64,
+    voice: String,
     device_mode: String,
 ) -> Result<Value, String> {
     let engine_state = state.inner().clone();
@@ -1095,7 +1097,8 @@ async fn plan_narration_timeline(
                 "method": "plan_timeline",
                 "params": {
                     "text": text,
-                    "targetDuration": target_duration
+                    "targetDuration": target_duration,
+                    "voice": voice
                 }
             }),
             device_mode.as_str(),
@@ -1293,6 +1296,116 @@ async fn render_video(
     .map_err(|error| format!("Render task failed: {error}"))?
 }
 
+fn ai_edit_video_sync(
+    app: AppHandle,
+    task_state: RenderTaskState,
+    engine_state: EngineWorkerState,
+    video_path: String,
+    instruction: String,
+    voice: String,
+    speed: f64,
+    original_volume: f64,
+    output_dir: Option<String>,
+    ducking: bool,
+    subtitles: bool,
+    device_mode: String,
+    target_duration: Option<f64>,
+    narration_language: String,
+) -> Result<Value, String> {
+    let local = configured_runtime_home(&app)?
+        .ok_or_else(|| "Local AI runtime is not configured. Run setup first.".to_string())?;
+    ensure_runtime_dirs(&local)?;
+
+    let output_path = make_output_path(&local, &video_path, output_dir)?;
+    let history_source_video = video_path.clone();
+    let history_voice = voice.clone();
+    let history_device_mode = device_mode.clone();
+
+    let request = json!({
+        "id": "desktop-ai-edit",
+        "method": "ai_edit",
+        "params": {
+            "videoPath": video_path,
+            "instruction": instruction,
+            "voice": voice,
+            "speed": speed,
+            "originalVolume": original_volume,
+            "ducking": ducking,
+            "subtitles": subtitles,
+            "targetDuration": target_duration,
+            "narrationLanguage": narration_language,
+            "outputPath": output_path
+        }
+    });
+
+    let result = run_persistent_engine_request(
+        Some(&app),
+        &engine_state,
+        Some(&task_state),
+        &local,
+        request,
+        device_mode.as_str(),
+        Some("videomagic://render-progress"),
+    )?;
+
+    remember_render(
+        &app,
+        &history_source_video,
+        &result,
+        &history_voice,
+        speed,
+        original_volume,
+        ducking,
+        true,
+        subtitles,
+        &history_device_mode,
+    )?;
+
+    Ok(result)
+}
+
+#[tauri::command]
+async fn ai_edit_video(
+    app: AppHandle,
+    state: State<'_, RenderTaskState>,
+    engine: State<'_, EngineWorkerState>,
+    video_path: String,
+    instruction: String,
+    voice: String,
+    speed: f64,
+    original_volume: f64,
+    output_dir: Option<String>,
+    ducking: bool,
+    subtitles: bool,
+    device_mode: String,
+    target_duration: Option<f64>,
+    narration_language: String,
+) -> Result<Value, String> {
+    let task_state = state.inner().clone();
+    let engine_state = engine.inner().clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        ai_edit_video_sync(
+            app,
+            task_state,
+            engine_state,
+            video_path,
+            instruction,
+            voice,
+            speed,
+            original_volume,
+            output_dir,
+            ducking,
+            subtitles,
+            device_mode,
+            target_duration,
+            narration_language,
+        )
+    })
+    .await
+    .map_err(|error| format!("AI edit task failed: {error}"))?
+}
+
 #[tauri::command]
 fn cancel_render(state: State<'_, RenderTaskState>) -> Result<bool, String> {
     let pid = state
@@ -1364,6 +1477,7 @@ pub fn run() {
             plan_narration_timeline,
             preview_voice,
             render_video,
+            ai_edit_video,
             cancel_render
         ])
         .run(tauri::generate_context!())
