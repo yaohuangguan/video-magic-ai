@@ -104,11 +104,12 @@ def _json_object(text: str) -> dict[str, Any]:
     try:
         value = json.loads(clean)
     except json.JSONDecodeError:
-        start = clean.find("{")
-        end = clean.rfind("}")
-        if start < 0 or end <= start:
-            raise ValueError("Video AI did not return a JSON edit plan.")
-        value = json.loads(clean[start : end + 1])
+        try:
+            import json_repair
+
+            value = json_repair.loads(clean)
+        except Exception as exc:
+            raise ValueError("Video AI did not return a usable JSON edit plan.") from exc
 
     if not isinstance(value, dict):
         raise ValueError("Video AI edit plan must be a JSON object.")

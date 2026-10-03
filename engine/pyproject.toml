@@ -9,6 +9,7 @@ dependencies = [
   "numpy>=1.26",
   "soundfile>=0.12",
   "pillow>=10",
+  "json-repair>=0.63",
   "transformers[torch]>=5.7.0",
   "torchvision",
   "av",
