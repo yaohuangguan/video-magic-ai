@@ -387,6 +387,40 @@ fn runtime_status(app: AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command]
+fn runtime_diagnostics(app: AppHandle) -> Result<Value, String> {
+    let runtime = runtime_status_impl(&app)?;
+    let engine = if runtime
+        .get("ready")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        match configured_runtime_home(&app)? {
+            Some(local) => run_engine_request(
+                &local,
+                json!({
+                    "id": "desktop-diagnostics",
+                    "method": "doctor",
+                    "params": {}
+                }),
+                None,
+            )
+            .unwrap_or_else(|error| json!({ "error": error })),
+            None => Value::Null,
+        }
+    } else {
+        Value::Null
+    };
+
+    Ok(json!({
+        "appVersion": env!("CARGO_PKG_VERSION"),
+        "platform": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "runtime": runtime,
+        "engine": engine
+    }))
+}
+
+#[tauri::command]
 fn recent_projects(app: AppHandle) -> Result<Vec<Value>, String> {
     let items = read_recent_projects(&app)?;
     Ok(items
@@ -890,6 +924,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             runtime_status,
+            runtime_diagnostics,
             recent_projects,
             remove_recent_project,
             clear_recent_projects,

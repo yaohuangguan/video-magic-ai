@@ -135,6 +135,8 @@ Windows desktop development also requires Rust, MSVC Build Tools, the Windows SD
 
 The local Python engine currently uses a project venv during development. This is intentionally not committed.
 
+A manual **Windows Package** GitHub Actions workflow builds the unsigned NSIS installer on `windows-latest` and uploads it as a downloadable workflow artifact. Public distribution still needs Windows code signing and updater hardening.
+
 ## First-run runtime bootstrap
 
 The NSIS installer stays small and ships the desktop shell, bootstrap script, and VideoMagic Python engine source. On first setup, the user chooses a parent folder for heavy AI data.

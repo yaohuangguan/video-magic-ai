@@ -43,6 +43,8 @@
 - [x] Reusable creator presets with built-in and custom profiles.
 - [x] Auto / GPU / CPU inference selection with Auto CUDA-to-CPU fallback.
 - [x] Repair-in-place runtime recovery using the existing data directory.
+- [x] Manual GitHub Actions workflow for reproducible unsigned Windows installer artifacts.
+- [x] Settings & diagnostics center for runtime, GPU, media tools and shortcuts.
 - [ ] Windows code signing and auto-update.
 
 ## Later

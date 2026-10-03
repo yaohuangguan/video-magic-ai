@@ -796,3 +796,199 @@ input[type="range"] { width: 100%; margin: 9px 0 0; accent-color: #1e1e1e; }
   border-top: 1px solid #e0ddd6;
   background: #f6f4ef;
 }
+
+
+.settings-modal {
+  width: min(760px, calc(100vw - 48px));
+  max-height: calc(100vh - 90px);
+  overflow: hidden;
+  border: 1px solid #d2cec5;
+  border-radius: 18px;
+  background: #fbfaf7;
+  box-shadow: 0 24px 80px rgba(28, 24, 18, .22);
+}
+
+.settings-content {
+  max-height: calc(100vh - 230px);
+  overflow-y: auto;
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.settings-section {
+  padding: 16px;
+  border: 1px solid #dfdbd3;
+  border-radius: 13px;
+  background: #fff;
+}
+
+.settings-section-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-section-title strong {
+  display: block;
+  font-size: 13px;
+}
+
+.settings-section-title span {
+  display: block;
+  margin-top: 4px;
+  color: #817b72;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.diagnostic-grid {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.diagnostic-grid > div {
+  min-width: 0;
+  padding: 10px 11px;
+  border-radius: 10px;
+  background: #f4f2ed;
+}
+
+.diagnostic-grid span {
+  display: block;
+  color: #827c73;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.diagnostic-grid strong {
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-path {
+  margin-top: 14px;
+  padding: 10px 11px;
+  border: 1px solid #e0dcd4;
+  border-radius: 10px;
+  background: #f7f5f1;
+}
+
+.settings-path.compact {
+  margin-top: 8px;
+}
+
+.settings-path span {
+  display: block;
+  color: #827c73;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.settings-path code {
+  display: block;
+  margin-top: 5px;
+  overflow: hidden;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-actions {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.health-badge {
+  flex: none;
+  padding: 5px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.health-badge.healthy {
+  background: #e9f4e9;
+  color: #34764a;
+}
+
+.health-badge.warning {
+  background: #f5ece0;
+  color: #8b6533;
+}
+
+.settings-segmented {
+  margin-top: 14px;
+}
+
+.hardware-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.shortcut-grid {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.shortcut-grid > div {
+  min-width: 0;
+  padding: 9px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-radius: 9px;
+  background: #f5f3ee;
+}
+
+.shortcut-grid span {
+  color: #666057;
+  font-size: 11px;
+}
+
+kbd {
+  padding: 3px 6px;
+  border: 1px solid #d2cec6;
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  background: #fff;
+  color: #333;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.settings-error {
+  padding: 12px;
+  border: 1px solid #e6cbc7;
+  border-radius: 11px;
+  background: #fbf1ef;
+}
+
+.settings-error strong {
+  display: block;
+  color: #8b4039;
+  font-size: 11px;
+}
+
+.settings-error code {
+  display: block;
+  margin-top: 6px;
+  color: #78504b;
+  font-size: 10px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
