@@ -289,12 +289,17 @@ def plan_video_edit(
         }
     ]
 
+    downsample_mode = "16x"
     inputs = processor.apply_chat_template(
         messages,
         tokenize=True,
         add_generation_prompt=True,
         return_dict=True,
         return_tensors="pt",
+        downsample_mode=downsample_mode,
+        stack_frames=1,
+        max_slice_nums=1,
+        use_image_id=False,
         processor_kwargs={
             "videos_kwargs": {
                 "do_sample_frames": False,
@@ -304,6 +309,7 @@ def plan_video_edit(
 
     generated_ids = model.generate(
         **inputs,
+        downsample_mode=downsample_mode,
         max_new_tokens=1800,
         do_sample=False,
     )
