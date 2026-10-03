@@ -277,3 +277,121 @@ def mix_voiceover(
         "videoEncoder": video_args[1] if len(video_args) > 1 else None,
         "ffmpegTail": completed.stderr.splitlines()[-12:],
     }
+
+
+def render_edit_plan(
+    video_path: str | Path,
+    clips: list[dict[str, Any]],
+    output_path: str | Path,
+) -> dict[str, Any]:
+    ffmpeg = _media_tool("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg was not found.")
+    if not clips:
+        raise ValueError("Edit plan has no clips.")
+
+    video = Path(video_path)
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    info = probe_video(video)
+    source_duration = max(float(info["durationSeconds"]), 0.01)
+    has_audio = bool(info["hasAudio"])
+
+    normalized: list[dict[str, Any]] = []
+    output_cursor = 0.0
+    for index, raw in enumerate(clips[:12]):
+        try:
+            start = float(raw.get("sourceStart"))
+            end = float(raw.get("sourceEnd"))
+            speed = float(raw.get("speed", 1.0))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid edit clip {index + 1}.") from exc
+
+        start = max(0.0, min(start, source_duration))
+        end = max(0.0, min(end, source_duration))
+        speed = max(0.5, min(speed, 2.0))
+        if end - start < 0.08:
+            raise ValueError(f"Edit clip {index + 1} is too short.")
+
+        duration = (end - start) / speed
+        normalized.append(
+            {
+                **raw,
+                "sourceStart": start,
+                "sourceEnd": end,
+                "speed": speed,
+                "outputStart": output_cursor,
+                "outputEnd": output_cursor + duration,
+            }
+        )
+        output_cursor += duration
+
+    filters: list[str] = []
+    concat_inputs: list[str] = []
+
+    for index, clip in enumerate(normalized):
+        start = clip["sourceStart"]
+        end = clip["sourceEnd"]
+        speed = clip["speed"]
+
+        filters.append(
+            f"[0:v]trim=start={start:.3f}:end={end:.3f},"
+            f"setpts=(PTS-STARTPTS)/{speed:.6f}[v{index}]"
+        )
+        concat_inputs.append(f"[v{index}]")
+
+        if has_audio:
+            filters.append(
+                f"[0:a]atrim=start={start:.3f}:end={end:.3f},"
+                f"asetpts=PTS-STARTPTS,atempo={speed:.6f}[a{index}]"
+            )
+            concat_inputs.append(f"[a{index}]")
+
+    if has_audio:
+        filters.append(
+            "".join(concat_inputs)
+            + f"concat=n={len(normalized)}:v=1:a=1[vout][aout]"
+        )
+    else:
+        filters.append(
+            "".join(concat_inputs)
+            + f"concat=n={len(normalized)}:v=1:a=0[vout]"
+        )
+
+    video_args = _video_encoder_args(ffmpeg, True)
+    command = [
+        ffmpeg,
+        "-y",
+        "-i",
+        str(video),
+        "-filter_complex",
+        ";".join(filters),
+        "-map",
+        "[vout]",
+    ]
+    if has_audio:
+        command.extend(["-map", "[aout]"])
+
+    command.extend(video_args)
+    if has_audio:
+        command.extend(["-c:a", "aac", "-b:a", "192k"])
+
+    command.extend(
+        [
+            "-movflags",
+            "+faststart",
+            str(output),
+        ]
+    )
+
+    completed = _run(command)
+    return {
+        "path": str(output),
+        "sourceDurationSeconds": source_duration,
+        "videoDurationSeconds": output_cursor,
+        "hasAudio": has_audio,
+        "clips": normalized,
+        "videoEncoder": video_args[1] if len(video_args) > 1 else None,
+        "ffmpegTail": completed.stderr.splitlines()[-12:],
+    }

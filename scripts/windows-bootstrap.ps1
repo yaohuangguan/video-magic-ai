@@ -91,19 +91,20 @@ if (-not (Test-Path $pythonExe)) {
 
 Write-Step "python" ("Using " + $pythonExe)
 
-$torchReady = & $pythonExe -c "import importlib.util; print('1' if importlib.util.find_spec('torch') else '0')"
-if ($torchReady.Trim() -ne "1") {
-    $hasNvidia = $null -ne (Get-Command "nvidia-smi.exe" -ErrorAction SilentlyContinue)
-    $torchIndex = if ($hasNvidia) {
-        "https://download.pytorch.org/whl/cu128"
-    } else {
-        "https://download.pytorch.org/whl/cpu"
-    }
+$hasNvidia = $null -ne (Get-Command "nvidia-smi.exe" -ErrorAction SilentlyContinue)
+$torchIndex = if ($hasNvidia) {
+    "https://download.pytorch.org/whl/cu128"
+} else {
+    "https://download.pytorch.org/whl/cpu"
+}
 
-    Write-Step "torch" ("Installing PyTorch from " + $torchIndex)
-    & $pythonExe -m pip install torch --index-url $torchIndex
+$torchReady = & $pythonExe -c "import importlib.util; print('1' if importlib.util.find_spec('torch') else '0')"
+$visionReady = & $pythonExe -c "import importlib.util; print('1' if importlib.util.find_spec('torchvision') else '0')"
+if ($torchReady.Trim() -ne "1" -or $visionReady.Trim() -ne "1") {
+    Write-Step "torch" ("Installing PyTorch + torchvision from " + $torchIndex)
+    & $pythonExe -m pip install torch torchvision --index-url $torchIndex
     if ($LASTEXITCODE -ne 0) {
-        throw "PyTorch installation failed"
+        throw "PyTorch / torchvision installation failed"
     }
 }
 
@@ -111,6 +112,20 @@ Write-Step "engine" "Installing VideoMagic local AI engine"
 & $pythonExe -m pip install --upgrade $EngineDir
 if ($LASTEXITCODE -ne 0) {
     throw "VideoMagic engine installation failed"
+}
+
+$videoModelId = "openbmb/MiniCPM-V-4.6"
+Write-Step "video-ai" "Checking local Video AI model"
+& $pythonExe -c "from huggingface_hub import snapshot_download; snapshot_download('$videoModelId', local_files_only=True)" *> $null
+$modelCached = $LASTEXITCODE -eq 0
+if (-not $modelCached) {
+    Write-Step "video-ai" "Downloading local Video AI model (~2.6 GB) to the selected data drive"
+    & $pythonExe -c "from huggingface_hub import snapshot_download; snapshot_download('$videoModelId')"
+    if ($LASTEXITCODE -ne 0) {
+        Write-Step "video-ai" "Video AI download was deferred; AI Director will retry on first use"
+    }
+} else {
+    Write-Step "video-ai" "Local Video AI model is already cached"
 }
 
 if (-not (Test-Path $ffmpegExe) -or -not (Test-Path $ffprobeExe)) {
@@ -137,7 +152,7 @@ $env:PATH = $ffmpegBin + ";" + $env:PATH
 $env:VIDEOMAGIC_HOME = $DataDir
 
 Write-Step "verify" "Checking local runtime"
-$verify = & $pythonExe -c "import json, importlib.util, torch; print(json.dumps({'torch': torch.__version__, 'cuda': bool(torch.cuda.is_available()), 'gpu': torch.cuda.get_device_name(0) if torch.cuda.is_available() else None, 'kokoro': bool(importlib.util.find_spec('kokoro')), 'misaki': bool(importlib.util.find_spec('misaki'))}))"
+$verify = & $pythonExe -c "import json, importlib.util, torch; print(json.dumps({'torch': torch.__version__, 'cuda': bool(torch.cuda.is_available()), 'gpu': torch.cuda.get_device_name(0) if torch.cuda.is_available() else None, 'kokoro': bool(importlib.util.find_spec('kokoro')), 'misaki': bool(importlib.util.find_spec('misaki')), 'transformers': bool(importlib.util.find_spec('transformers')), 'torchvision': bool(importlib.util.find_spec('torchvision')), 'av': bool(importlib.util.find_spec('av'))}))"
 if ($LASTEXITCODE -ne 0) {
     throw "Runtime verification failed"
 }
