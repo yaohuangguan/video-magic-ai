@@ -44,6 +44,20 @@ type PreviewResult = {
   };
 };
 
+type SavedProject = {
+  videoPath: string;
+  script: string;
+  voice: string;
+  speed: number;
+  originalVolume: number;
+  ducking: boolean;
+  autoTiming: boolean;
+  subtitles: boolean;
+  outputDir: string;
+};
+
+const PROJECT_STORAGE_KEY = "videomagic.project.v1";
+
 const voices: VoicePreset[] = [
   { id: "zm_009", name: "Punchy Male", description: "Sharper pacing for commentary and short-form clips.", tag: "Fast" },
   { id: "zm_010", name: "Story Male", description: "Natural Mandarin narration with a balanced tone.", tag: "Story" },
@@ -87,8 +101,11 @@ function App() {
   const [renderStage, setRenderStage] = useState("idle");
   const [runtimeProgress, setRuntimeProgress] = useState(0);
   const [runtimeMessage, setRuntimeMessage] = useState("");
+  const [isDragging, setIsDragging] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
 
   const previewAudio = useRef<HTMLAudioElement | null>(null);
+  const projectHydrated = useRef(false);
 
   const canGenerate = Boolean(
     runtime?.ready &&
@@ -102,8 +119,8 @@ function App() {
     try {
       const result = await invoke<RuntimeStatus>("runtime_status");
       setRuntime(result);
-      if (result.dataDir && !outputDir) {
-        setOutputDir(result.dataDir + "\\exports");
+      if (result.dataDir) {
+        setOutputDir((current) => current || result.dataDir + "\\exports");
       }
     } catch (error) {
       setRuntime({
@@ -146,6 +163,103 @@ function App() {
       disposed = true;
       cleanups.forEach((cleanup) => cleanup());
       previewAudio.current?.pause();
+    };
+  }, []);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(PROJECT_STORAGE_KEY);
+      if (raw) {
+        const saved = JSON.parse(raw) as Partial<SavedProject>;
+        if (typeof saved.videoPath === "string") setVideoPath(saved.videoPath);
+        if (typeof saved.script === "string") setScript(saved.script);
+        if (typeof saved.voice === "string" && voices.some((item) => item.id === saved.voice)) {
+          setVoice(saved.voice);
+        }
+        if (typeof saved.speed === "number") setSpeed(saved.speed);
+        if (typeof saved.originalVolume === "number") setOriginalVolume(saved.originalVolume);
+        if (typeof saved.ducking === "boolean") setDucking(saved.ducking);
+        if (typeof saved.autoTiming === "boolean") setAutoTiming(saved.autoTiming);
+        if (typeof saved.subtitles === "boolean") setSubtitles(saved.subtitles);
+        if (typeof saved.outputDir === "string") setOutputDir(saved.outputDir);
+      }
+    } catch {
+      localStorage.removeItem(PROJECT_STORAGE_KEY);
+    } finally {
+      projectHydrated.current = true;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!projectHydrated.current) return;
+
+    const timer = window.setTimeout(() => {
+      const snapshot: SavedProject = {
+        videoPath,
+        script,
+        voice,
+        speed,
+        originalVolume,
+        ducking,
+        autoTiming,
+        subtitles,
+        outputDir,
+      };
+      localStorage.setItem(PROJECT_STORAGE_KEY, JSON.stringify(snapshot));
+      setLastSavedAt(Date.now());
+    }, 350);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    videoPath,
+    script,
+    voice,
+    speed,
+    originalVolume,
+    ducking,
+    autoTiming,
+    subtitles,
+    outputDir,
+  ]);
+
+  useEffect(() => {
+    let disposed = false;
+    let cleanup: (() => void) | null = null;
+
+    void import("@tauri-apps/api/webview")
+      .then(({ getCurrentWebview }) =>
+        getCurrentWebview().onDragDropEvent((event) => {
+          if (disposed) return;
+          if (event.payload.type === "enter" || event.payload.type === "over") {
+            setIsDragging(true);
+          }
+          if (event.payload.type === "leave") {
+            setIsDragging(false);
+          }
+          if (event.payload.type === "drop") {
+            setIsDragging(false);
+            const path = event.payload.paths.find((item) =>
+              /\.(mp4|mov|mkv|webm|m4v)$/i.test(item),
+            );
+            if (path) {
+              setVideoPath(path);
+              setOutputPath("");
+              setRenderProgress(0);
+              setRenderStage("idle");
+              setStatus("Video ready");
+            }
+          }
+        }),
+      )
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else cleanup = unlisten;
+      })
+      .catch(() => {});
+
+    return () => {
+      disposed = true;
+      cleanup?.();
     };
   }, []);
 
@@ -304,6 +418,59 @@ function App() {
     }
   }
 
+  function newProject() {
+    if (isGenerating) return;
+    previewAudio.current?.pause();
+    setIsPreviewing(false);
+    setVideoPath("");
+    setScript("");
+    setOutputPath("");
+    setRenderProgress(0);
+    setRenderStage("idle");
+    setStatus("New project");
+  }
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const commandKey = event.ctrlKey || event.metaKey;
+
+      if (commandKey && event.key.toLowerCase() === "o") {
+        event.preventDefault();
+        void chooseVideo();
+      }
+
+      if (commandKey && event.key === "Enter" && canGenerate) {
+        event.preventDefault();
+        void generate();
+      }
+
+      if (commandKey && event.shiftKey && event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        newProject();
+      }
+
+      if (event.key === "Escape" && isGenerating) {
+        event.preventDefault();
+        void cancelRender();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [
+    canGenerate,
+    isGenerating,
+    videoPath,
+    script,
+    voice,
+    speed,
+    originalVolume,
+    outputDir,
+    ducking,
+    autoTiming,
+    subtitles,
+  ]);
+
   const progressWidth = String(Math.max(0, Math.min(100, renderProgress * 100))) + "%";
   const runtimeProgressWidth = String(Math.max(0, Math.min(100, runtimeProgress * 100))) + "%";
 
@@ -319,6 +486,15 @@ function App() {
         </div>
 
         <div className="topbar-actions">
+          <button
+            className="topbar-button"
+            type="button"
+            disabled={isGenerating}
+            onClick={newProject}
+            title="New project (Ctrl+Shift+N)"
+          >
+            New project
+          </button>
           <div className={"runtime-pill " + (runtime?.ready ? "ready" : "")}>
             <span className="status-dot" />
             {runtime?.ready ? "Local AI ready" : "Runtime setup required"}
@@ -328,7 +504,10 @@ function App() {
 
       <section className="project-header">
         <div>
-          <span className="project-kicker">NEW PROJECT</span>
+          <span className="project-kicker">
+            {videoPath ? fileName(videoPath).replace(/\.[^.]+$/, "") : "UNTITLED PROJECT"}
+            {lastSavedAt ? " · AUTOSAVED" : ""}
+          </span>
           <h1>Create voiceover video</h1>
           <p>Import a clip, write the narration, choose a voice, then render locally.</p>
         </div>
@@ -357,17 +536,29 @@ function App() {
             </div>
 
             <button
-              className={"video-picker " + (videoPath ? "selected" : "")}
+              className={
+                "video-picker " +
+                (videoPath ? "selected " : "") +
+                (isDragging ? "dragging" : "")
+              }
               type="button"
               onClick={chooseVideo}
             >
-              <div className="video-picker-icon">{videoPath ? "✓" : "+"}</div>
+              <div className="video-picker-icon">{videoPath ? "✓" : isDragging ? "↓" : "+"}</div>
               <div className="video-picker-copy">
-                <strong>{videoPath ? fileName(videoPath) : "Choose a source video"}</strong>
+                <strong>
+                  {isDragging
+                    ? "Drop video to import"
+                    : videoPath
+                      ? fileName(videoPath)
+                      : "Choose or drop a source video"}
+                </strong>
                 <span>
-                  {videoPath
-                    ? videoPath
-                    : "VideoMagic reads and renders the file locally."}
+                  {isDragging
+                    ? "Release anywhere in the window."
+                    : videoPath
+                      ? videoPath
+                      : "VideoMagic reads and renders the file locally."}
                 </span>
               </div>
               <span className="picker-action">{videoPath ? "Selected" : "Browse"}</span>
