@@ -7,10 +7,12 @@ Public Windows releases are automated from main.
 1. A pull request is merged to main.
 2. Windows CI runs the frontend build, Rust check, and lightweight Python engine tests.
 3. When that main-branch CI run succeeds, Release Windows starts.
-4. The release workflow reads the latest semantic tag and increments the patch version.
-5. The runner stamps that version into the build workspace, builds the NSIS installer, and calculates SHA-256.
-6. GitHub creates the new tag and Release against the exact main commit.
-7. The release uploads:
+4. The workflow checks whether that exact main commit already has a published semantic-version release. Automatic reruns do not create duplicate releases.
+5. The release workflow reads the latest semantic tag and increments the patch version.
+6. The runner stamps that version consistently into the frontend package, Tauri config, Cargo manifest, and Cargo lockfile.
+7. The runner builds the NSIS installer and calculates SHA-256.
+8. GitHub creates the new tag and Release against the exact main commit.
+9. The release uploads:
    - VideoMagic-Windows-x64-setup.exe
    - VideoMagic-Windows-x64-setup.exe.sha256
 

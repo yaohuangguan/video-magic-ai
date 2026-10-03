@@ -49,8 +49,32 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Guard against duplicate automatic releases
+        id: guard
+        if: github.event_name == 'workflow_run'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          git fetch --tags --force
+          $tags = @(git tag --points-at $env:RELEASE_SHA --list "v*")
+          $alreadyReleased = $false
+
+          foreach ($tag in $tags) {
+            gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "Commit $env:RELEASE_SHA is already published as $tag."
+              $alreadyReleased = $true
+              break
+            }
+          }
+
+          "skip=$($alreadyReleased.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
       - name: Calculate next patch version
         id: version
+        if: steps.guard.outputs.skip != 'true'
         shell: pwsh
         run: |
           git fetch --tags --force
@@ -77,6 +101,7 @@ jobs:
           Write-Host "Next release: $tag"
 
       - name: Stamp build version
+        if: steps.guard.outputs.skip != 'true'
         shell: pwsh
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
@@ -93,11 +118,26 @@ jobs:
           $cargo = $cargo -replace '(?m)^version = "[^"]+"', ('version = "' + $env:RELEASE_VERSION + '"')
           Set-Content src-tauri/Cargo.toml $cargo
 
+          $lock = Get-Content src-tauri/Cargo.lock -Raw
+          $pattern = '(?ms)(\[\[package\]\]\r?\nname = "videomagic"\r?\nversion = ")[^"]+(")'
+          $lock = [regex]::Replace(
+            $lock,
+            $pattern,
+            {
+              param($match)
+              return $match.Groups[1].Value + $env:RELEASE_VERSION + $match.Groups[2].Value
+            },
+            1
+          )
+          Set-Content src-tauri/Cargo.lock $lock
+
       - name: Build NSIS installer
+        if: steps.guard.outputs.skip != 'true'
         run: pnpm tauri build --bundles nsis
 
       - name: Prepare stable release assets
         id: assets
+        if: steps.guard.outputs.skip != 'true'
         shell: pwsh
         run: |
           $installer = Get-ChildItem "src-tauri/target/release/bundle/nsis/*.exe" | Select-Object -First 1
@@ -115,6 +155,7 @@ jobs:
           "checksum=$stableName.sha256" >> $env:GITHUB_OUTPUT
 
       - name: Publish GitHub Release and tag
+        if: steps.guard.outputs.skip != 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -122,4 +163,18 @@ jobs:
           RELEASE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
           INSTALLER: ${{ steps.assets.outputs.installer }}
           CHECKSUM: ${{ steps.assets.outputs.checksum }}
-        run: gh release create $env:RELEASE_TAG $env:INSTALLER $env:CHECKSUM --repo $env:GITHUB_REPOSITORY --target $env:RELEASE_SHA --title "VideoMagic $env:RELEASE_TAG" --generate-notes --latest
+        run: |
+          gh release create $env:RELEASE_TAG $env:INSTALLER $env:CHECKSUM --repo $env:GITHUB_REPOSITORY --target $env:RELEASE_SHA --title "VideoMagic $env:RELEASE_TAG" --generate-notes --latest
+
+      - name: Summary
+        shell: pwsh
+        run: |
+          if ("${{ steps.guard.outputs.skip }}" -eq "true") {
+            "### Release skipped" >> $env:GITHUB_STEP_SUMMARY
+            "This main commit already has a published semantic-version release." >> $env:GITHUB_STEP_SUMMARY
+          } else {
+            "### VideoMagic ${{ steps.version.outputs.tag }}" >> $env:GITHUB_STEP_SUMMARY
+            "- Windows installer: VideoMagic-Windows-x64-setup.exe" >> $env:GITHUB_STEP_SUMMARY
+            "- SHA-256 checksum uploaded" >> $env:GITHUB_STEP_SUMMARY
+            "- Stable latest-download URL preserved" >> $env:GITHUB_STEP_SUMMARY
+          }
