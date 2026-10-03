@@ -226,6 +226,33 @@ class DirectorPlanTests(unittest.TestCase):
         )
         self.assertGreater(result["outputDurationSeconds"], 0)
 
+    def test_normalize_edit_plan_maps_candidate_clip_ids_to_exact_ranges(self) -> None:
+        candidates = [
+            {"id": 1, "sourceStart": 0.0, "sourceEnd": 1.0},
+            {"id": 2, "sourceStart": 1.0, "sourceEnd": 2.0},
+            {"id": 3, "sourceStart": 2.0, "sourceEnd": 3.0},
+            {"id": 4, "sourceStart": 3.0, "sourceEnd": 4.0},
+        ]
+        result = normalize_edit_plan(
+            {
+                "title": "Keep middle",
+                "narrationLanguage": "en",
+                "clips": [
+                    {
+                        "clipIds": [2, 3],
+                        "speed": 1.0,
+                        "narration": "Middle section.",
+                    }
+                ],
+            },
+            source_duration=4.0,
+            candidates=candidates,
+        )
+
+        self.assertEqual(result["clips"][0]["sourceStart"], 1.0)
+        self.assertEqual(result["clips"][0]["sourceEnd"], 3.0)
+        self.assertEqual(result["clips"][0]["clipIds"], [2, 3])
+
     def test_normalize_edit_plan_respects_target_duration_cap(self) -> None:
         result = normalize_edit_plan(
             {

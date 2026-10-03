@@ -124,18 +124,41 @@ def _language_hint(value: str | None) -> str:
     return "auto"
 
 
-def _timestamp_frames(
-    frames: np.ndarray,
+def _candidate_windows(
     source_duration: float,
+    max_windows: int = 32,
+) -> list[dict[str, Any]]:
+    window_seconds = max(1.0, source_duration / max_windows)
+    count = max(1, int(math.ceil(source_duration / window_seconds)))
+    candidates: list[dict[str, Any]] = []
+
+    for index in range(count):
+        start = index * window_seconds
+        end = min(source_duration, (index + 1) * window_seconds)
+        if end - start < 0.08:
+            continue
+        candidates.append(
+            {
+                "id": index + 1,
+                "sourceStart": round(start, 3),
+                "sourceEnd": round(end, 3),
+            }
+        )
+
+    return candidates
+
+
+def _label_candidate_frames(
+    frames: np.ndarray,
+    candidates: list[dict[str, Any]],
 ) -> np.ndarray:
     if len(frames) == 0:
         return frames
 
     annotated: list[np.ndarray] = []
-    denominator = max(len(frames) - 1, 1)
 
     for index, frame in enumerate(frames):
-        seconds = source_duration * index / denominator
+        candidate = candidates[min(index, len(candidates) - 1)]
         image = Image.fromarray(frame).convert("RGB")
         draw = ImageDraw.Draw(image)
 
@@ -144,7 +167,10 @@ def _timestamp_frames(
         except TypeError:
             font = ImageFont.load_default()
 
-        label = f"TIME {seconds:05.1f}s"
+        label = (
+            f"CLIP {candidate['id']:02d}  "
+            f"{candidate['sourceStart']:.1f}-{candidate['sourceEnd']:.1f}s"
+        )
         bbox = draw.textbbox((0, 0), label, font=font)
         width = bbox[2] - bbox[0]
         height = bbox[3] - bbox[1]
@@ -168,6 +194,7 @@ def build_director_prompt(
     source_duration: float,
     target_duration: float | None = None,
     narration_language: str = "auto",
+    candidates: list[dict[str, Any]] | None = None,
 ) -> str:
     duration_goal = (
         f"Target the final edit at about {target_duration:.1f} seconds."
@@ -175,19 +202,26 @@ def build_director_prompt(
         else "Choose an appropriate concise final duration; do not make it longer than the source."
     )
     language_hint = _language_hint(narration_language)
+    candidate_catalog = "\n".join(
+        f"- CLIP {item['id']:02d}: {item['sourceStart']:.1f}-{item['sourceEnd']:.1f}s"
+        for item in (candidates or [])
+    )
 
     return f"""
 You are the local AI director inside VideoMagic.
 
 Watch the supplied source video and turn the user's instruction into a deterministic edit decision list.
-The actual cutting will be performed by FFmpeg, so your output must describe source time ranges precisely.
-Sampled frames are visibly stamped with labels such as TIME 04.0s. Treat those visible timestamps as authoritative anchors for sourceStart/sourceEnd.
+VideoMagic has already divided the source into authoritative candidate clips. Every sampled frame is visibly stamped with its CLIP ID and exact source time range.
+You MUST select candidate CLIP IDs. Never invent sourceStart/sourceEnd timestamps.
 
 SOURCE DURATION: {source_duration:.3f} seconds
 USER INSTRUCTION:
 {instruction.strip()}
 
 {duration_goal}
+
+AVAILABLE CANDIDATE CLIPS:
+{candidate_catalog}
 
 Return STRICT JSON only. No Markdown and no explanation outside JSON.
 
@@ -198,19 +232,19 @@ Schema:
   "narrationLanguage": "zh" or "en",
   "clips": [
     {{
-      "sourceStart": 0.0,
-      "sourceEnd": 3.2,
+      "clipIds": [5, 6, 7],
       "speed": 1.0,
-      "narration": "short narration for this selected clip, or empty string",
-      "reason": "why this moment is kept"
+      "narration": "short narration for this selected clip group, or empty string",
+      "reason": "why these candidate clips are kept"
     }}
   ]
 }}
 
 Rules:
-- Keep between 1 and 12 clips.
-- 0 <= sourceStart < sourceEnd <= {source_duration:.3f}.
-- Each selected source range should normally be at least 0.35 seconds.
+- Keep between 1 and 12 clip groups.
+- clipIds must come only from AVAILABLE CANDIDATE CLIPS.
+- clipIds inside one group should be consecutive source clips. Start a new group when there is a gap.
+- Do not select INTRO/END or unrelated candidates when the user explicitly excludes them.
 - speed must be between 0.5 and 2.0. Use 1.0 unless pacing clearly benefits from a change.
 - Hard cuts only in this first version. Do not invent transitions, generated footage, zooms, or effects.
 - Clips may be reordered only when the user's storytelling request clearly benefits from it.
@@ -227,6 +261,7 @@ def normalize_edit_plan(
     raw_plan: dict[str, Any],
     source_duration: float,
     target_duration: float | None = None,
+    candidates: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     raw_clips = raw_plan.get("clips")
     if not isinstance(raw_clips, list) or not raw_clips:
@@ -234,42 +269,101 @@ def normalize_edit_plan(
 
     clips: list[dict[str, Any]] = []
     output_cursor = 0.0
+    candidate_map = {
+        int(item["id"]): item
+        for item in (candidates or [])
+    }
 
     for raw in raw_clips[:12]:
         if not isinstance(raw, dict):
             continue
 
         try:
-            source_start = float(raw.get("sourceStart"))
-            source_end = float(raw.get("sourceEnd"))
             speed = float(raw.get("speed", 1.0))
         except (TypeError, ValueError):
-            continue
-
-        source_start = max(0.0, min(source_start, source_duration))
-        source_end = max(0.0, min(source_end, source_duration))
+            speed = 1.0
         speed = max(0.5, min(speed, 2.0))
 
-        if source_end - source_start < 0.12:
-            continue
+        ranges: list[tuple[float, float, list[int]]] = []
+        raw_ids = raw.get("clipIds")
 
-        output_duration = (source_end - source_start) / speed
-        output_start = output_cursor
-        output_end = output_start + output_duration
+        if candidate_map and isinstance(raw_ids, list):
+            valid_ids = sorted(
+                {
+                    int(value)
+                    for value in raw_ids
+                    if isinstance(value, (int, float, str))
+                    and str(value).strip().isdigit()
+                    and int(value) in candidate_map
+                }
+            )
 
-        clips.append(
-            {
-                "id": f"clip-{len(clips) + 1}",
-                "sourceStart": round(source_start, 3),
-                "sourceEnd": round(source_end, 3),
-                "speed": round(speed, 3),
-                "outputStart": round(output_start, 3),
-                "outputEnd": round(output_end, 3),
-                "narration": str(raw.get("narration") or "").strip(),
-                "reason": str(raw.get("reason") or "").strip(),
-            }
-        )
-        output_cursor = output_end
+            group: list[int] = []
+            for clip_id in valid_ids:
+                if group and clip_id != group[-1] + 1:
+                    first = candidate_map[group[0]]
+                    last = candidate_map[group[-1]]
+                    ranges.append(
+                        (
+                            float(first["sourceStart"]),
+                            float(last["sourceEnd"]),
+                            group[:],
+                        )
+                    )
+                    group = []
+                group.append(clip_id)
+
+            if group:
+                first = candidate_map[group[0]]
+                last = candidate_map[group[-1]]
+                ranges.append(
+                    (
+                        float(first["sourceStart"]),
+                        float(last["sourceEnd"]),
+                        group[:],
+                    )
+                )
+        else:
+            try:
+                ranges.append(
+                    (
+                        float(raw.get("sourceStart")),
+                        float(raw.get("sourceEnd")),
+                        [],
+                    )
+                )
+            except (TypeError, ValueError):
+                continue
+
+        for source_start, source_end, clip_ids in ranges:
+            source_start = max(0.0, min(source_start, source_duration))
+            source_end = max(0.0, min(source_end, source_duration))
+            if source_end - source_start < 0.12:
+                continue
+
+            output_duration = (source_end - source_start) / speed
+            output_start = output_cursor
+            output_end = output_start + output_duration
+
+            clips.append(
+                {
+                    "id": f"clip-{len(clips) + 1}",
+                    "clipIds": clip_ids,
+                    "sourceStart": round(source_start, 3),
+                    "sourceEnd": round(source_end, 3),
+                    "speed": round(speed, 3),
+                    "outputStart": round(output_start, 3),
+                    "outputEnd": round(output_end, 3),
+                    "narration": str(raw.get("narration") or "").strip(),
+                    "reason": str(raw.get("reason") or "").strip(),
+                }
+            )
+            output_cursor = output_end
+            if len(clips) >= 12:
+                break
+
+        if len(clips) >= 12:
+            break
 
     if not clips:
         raise ValueError("Video AI returned no usable clip ranges.")
@@ -337,13 +431,14 @@ def plan_video_edit(
 
     from transformers.video_utils import load_video
 
-    frame_budget = min(64, max(16, int(round(source_duration * 2))))
+    candidates = _candidate_windows(source_duration)
+    frame_budget = len(candidates)
     video_frames, _video_metadata = load_video(
         str(video),
         num_frames=frame_budget,
         backend="pyav",
     )
-    video_frames = _timestamp_frames(video_frames, source_duration)
+    video_frames = _label_candidate_frames(video_frames, candidates)
 
     messages = [
         {
@@ -357,6 +452,7 @@ def plan_video_edit(
                         source_duration=source_duration,
                         target_duration=target_duration,
                         narration_language=narration_language,
+                        candidates=candidates,
                     ),
                 },
             ],
@@ -402,6 +498,7 @@ def plan_video_edit(
         _json_object(response),
         source_duration,
         target_duration=target_duration,
+        candidates=candidates,
     )
     plan["rawModelResponse"] = response
     return plan
