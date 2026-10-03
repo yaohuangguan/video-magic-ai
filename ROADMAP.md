@@ -36,6 +36,10 @@
 - [x] Live first-run setup-stage progress.
 - [x] First-run runtime setup UI with user-selected storage location.
 - [x] Synchronized SRT generation and burned-in subtitles.
+- [x] Project autosave / restore and drag-and-drop import.
+- [x] Native .vmagic project Open / Save / Save As workflow.
+- [x] Desktop keyboard shortcuts for project, import, render, and cancel actions.
+- [ ] Recent-projects browser.
 - [ ] Preset management.
 - [ ] Hardware fallback / CPU mode.
 - [ ] Retry/recovery UX for interrupted setup.

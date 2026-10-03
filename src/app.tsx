@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { openPath } from "@tauri-apps/plugin-opener";
 import "./app.css";
 
@@ -44,7 +44,13 @@ type PreviewResult = {
   };
 };
 
+type ProjectFileResult = {
+  path: string;
+  project: SavedProject;
+};
+
 type SavedProject = {
+  schemaVersion: 1;
   videoPath: string;
   script: string;
   voice: string;
@@ -103,6 +109,7 @@ function App() {
   const [runtimeMessage, setRuntimeMessage] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
+  const [projectFilePath, setProjectFilePath] = useState("");
 
   const previewAudio = useRef<HTMLAudioElement | null>(null);
   const projectHydrated = useRef(false);
@@ -195,6 +202,7 @@ function App() {
 
     const timer = window.setTimeout(() => {
       const snapshot: SavedProject = {
+        schemaVersion: 1,
         videoPath,
         script,
         voice,
@@ -418,10 +426,96 @@ function App() {
     }
   }
 
+  function projectSnapshot(): SavedProject {
+    return {
+      schemaVersion: 1,
+      videoPath,
+      script,
+      voice,
+      speed,
+      originalVolume,
+      ducking,
+      autoTiming,
+      subtitles,
+      outputDir,
+    };
+  }
+
+  function applyProject(project: Partial<SavedProject>) {
+    setVideoPath(typeof project.videoPath === "string" ? project.videoPath : "");
+    setScript(typeof project.script === "string" ? project.script : "");
+    if (typeof project.voice === "string" && voices.some((item) => item.id === project.voice)) {
+      setVoice(project.voice);
+    }
+    if (typeof project.speed === "number") setSpeed(project.speed);
+    if (typeof project.originalVolume === "number") setOriginalVolume(project.originalVolume);
+    if (typeof project.ducking === "boolean") setDucking(project.ducking);
+    if (typeof project.autoTiming === "boolean") setAutoTiming(project.autoTiming);
+    if (typeof project.subtitles === "boolean") setSubtitles(project.subtitles);
+    if (typeof project.outputDir === "string") setOutputDir(project.outputDir);
+    setOutputPath("");
+    setRenderProgress(0);
+    setRenderStage("idle");
+  }
+
+  async function saveProject(saveAs = false) {
+    let target = projectFilePath;
+
+    if (!target || saveAs) {
+      const suggestedName = videoPath
+        ? fileName(videoPath).replace(/\.[^.]+$/, "") + ".vmagic"
+        : "VideoMagic Project.vmagic";
+      const selected = await save({
+        title: "Save VideoMagic project",
+        defaultPath: suggestedName,
+        filters: [{ name: "VideoMagic Project", extensions: ["vmagic"] }],
+      });
+      if (typeof selected !== "string") return;
+      target = selected.toLowerCase().endsWith(".vmagic") ? selected : selected + ".vmagic";
+    }
+
+    try {
+      await invoke("save_project_file", {
+        path: target,
+        project: projectSnapshot(),
+      });
+      setProjectFilePath(target);
+      setLastSavedAt(Date.now());
+      setStatus("Project saved");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function openProject() {
+    if (isGenerating) return;
+
+    const selected = await open({
+      multiple: false,
+      directory: false,
+      title: "Open VideoMagic project",
+      filters: [{ name: "VideoMagic Project", extensions: ["vmagic"] }],
+    });
+    if (typeof selected !== "string") return;
+
+    try {
+      const result = await invoke<ProjectFileResult>("load_project_file", {
+        path: selected,
+      });
+      applyProject(result.project);
+      setProjectFilePath(result.path);
+      setLastSavedAt(Date.now());
+      setStatus("Project opened");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   function newProject() {
     if (isGenerating) return;
     previewAudio.current?.pause();
     setIsPreviewing(false);
+    setProjectFilePath("");
     setVideoPath("");
     setScript("");
     setOutputPath("");
@@ -436,7 +530,17 @@ function App() {
 
       if (commandKey && event.key.toLowerCase() === "o") {
         event.preventDefault();
+        void openProject();
+      }
+
+      if (commandKey && event.key.toLowerCase() === "i") {
+        event.preventDefault();
         void chooseVideo();
+      }
+
+      if (commandKey && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void saveProject(event.shiftKey);
       }
 
       if (commandKey && event.key === "Enter" && canGenerate) {
@@ -469,6 +573,7 @@ function App() {
     ducking,
     autoTiming,
     subtitles,
+    projectFilePath,
   ]);
 
   const progressWidth = String(Math.max(0, Math.min(100, renderProgress * 100))) + "%";
@@ -493,7 +598,25 @@ function App() {
             onClick={newProject}
             title="New project (Ctrl+Shift+N)"
           >
-            New project
+            New
+          </button>
+          <button
+            className="topbar-button"
+            type="button"
+            disabled={isGenerating}
+            onClick={openProject}
+            title="Open project (Ctrl+O)"
+          >
+            Open
+          </button>
+          <button
+            className="topbar-button emphasis"
+            type="button"
+            disabled={isGenerating}
+            onClick={() => void saveProject(false)}
+            title="Save project (Ctrl+S)"
+          >
+            Save
           </button>
           <div className={"runtime-pill " + (runtime?.ready ? "ready" : "")}>
             <span className="status-dot" />
@@ -505,8 +628,12 @@ function App() {
       <section className="project-header">
         <div>
           <span className="project-kicker">
-            {videoPath ? fileName(videoPath).replace(/\.[^.]+$/, "") : "UNTITLED PROJECT"}
-            {lastSavedAt ? " · AUTOSAVED" : ""}
+            {projectFilePath
+              ? fileName(projectFilePath).replace(/\.vmagic$/i, "")
+              : videoPath
+                ? fileName(videoPath).replace(/\.[^.]+$/, "")
+                : "UNTITLED PROJECT"}
+            {lastSavedAt ? (projectFilePath ? " · SAVED" : " · AUTOSAVED") : ""}
           </span>
           <h1>Create voiceover video</h1>
           <p>Import a clip, write the narration, choose a voice, then render locally.</p>

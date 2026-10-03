@@ -312,6 +312,42 @@ fn runtime_status(app: AppHandle) -> Result<Value, String> {
     runtime_status_impl(&app)
 }
 
+#[tauri::command]
+fn save_project_file(path: String, project: Value) -> Result<Value, String> {
+    let target = PathBuf::from(path.trim());
+    if target.as_os_str().is_empty() {
+        return Err("Project path is empty.".to_string());
+    }
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Could not create project folder: {error}"))?;
+    }
+
+    let content = serde_json::to_string_pretty(&project)
+        .map_err(|error| format!("Could not serialize project: {error}"))?;
+    fs::write(&target, content.as_bytes())
+        .map_err(|error| format!("Could not save project: {error}"))?;
+
+    Ok(json!({
+        "path": target,
+        "saved": true
+    }))
+}
+
+#[tauri::command]
+fn load_project_file(path: String) -> Result<Value, String> {
+    let target = PathBuf::from(path.trim());
+    let content = fs::read_to_string(&target)
+        .map_err(|error| format!("Could not read project file: {error}"))?;
+    let value = serde_json::from_str::<Value>(&content)
+        .map_err(|error| format!("Invalid VideoMagic project file: {error}"))?;
+
+    Ok(json!({
+        "path": target,
+        "project": value
+    }))
+}
+
 fn emit_runtime_progress(app: &AppHandle, line: &str) {
     if let Some(rest) = line.strip_prefix("[VideoMagic][") {
         if let Some((stage, message)) = rest.split_once("] ") {
@@ -736,6 +772,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             runtime_status,
+            save_project_file,
+            load_project_file,
             bootstrap_runtime,
             preview_voice,
             render_video,

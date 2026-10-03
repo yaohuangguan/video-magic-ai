@@ -56,6 +56,11 @@ button:focus-visible, textarea:focus-visible, input:focus-visible {
   font-weight: 720;
 }
 .topbar-button:disabled { cursor: not-allowed; opacity: .45; }
+.topbar-button.emphasis {
+  border-color: #242424;
+  background: #242424;
+  color: #fff;
+}
 .runtime-pill {
   display: inline-flex;
   align-items: center;

@@ -19,6 +19,8 @@ Current working flow:
 
 The source video never needs to be uploaded for the core workflow. Voice presets can be previewed before rendering.
 
+The desktop workspace also supports drag-and-drop import, autosave/restore, native `.vmagic` project files, explicit Open/Save/Save As, custom export folders, and desktop keyboard shortcuts.
+
 ## Current implementation
 
 ```text
