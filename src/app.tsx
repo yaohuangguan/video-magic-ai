@@ -198,6 +198,7 @@ function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isBootstrapping, setIsBootstrapping] = useState(false);
   const [isPreviewing, setIsPreviewing] = useState(false);
+  const [engineWarm, setEngineWarm] = useState(false);
 
   const [status, setStatus] = useState("Ready");
   const [renderProgress, setRenderProgress] = useState(0);
@@ -342,6 +343,10 @@ function App() {
       previewAudio.current?.pause();
     };
   }, []);
+
+  useEffect(() => {
+    setEngineWarm(false);
+  }, [deviceMode]);
 
   useEffect(() => {
     try {
@@ -550,6 +555,7 @@ function App() {
       audio.onended = () => setIsPreviewing(false);
       audio.onerror = () => setIsPreviewing(false);
       await audio.play();
+      setEngineWarm(true);
       setStatus(
         result.meta?.device
           ? "Preview playing on " + result.meta.device
@@ -565,6 +571,7 @@ function App() {
     setStatus("Cancelling render…");
     try {
       await invoke<boolean>("cancel_render");
+      setEngineWarm(false);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     }
@@ -597,6 +604,7 @@ function App() {
       setOutputPath(rendered);
       setRenderProgress(1);
       setRenderStage("done");
+      setEngineWarm(true);
       setStatus(rendered ? "Video ready" : "Render completed");
       await refreshRenderHistory();
     } catch (error) {
@@ -1180,6 +1188,14 @@ function App() {
                 ? runtime.dataDir
                 : "Choose a drive or folder for Python, models, cache and FFmpeg."}
             </p>
+
+            {runtime?.ready && (
+              <div className={"engine-warm-status " + (engineWarm ? "warm" : "")}>
+                <span />
+                <strong>{engineWarm ? "AI engine warm" : "AI engine cold"}</strong>
+                <small>{engineWarm ? "Model stays loaded for faster previews and renders." : "First voice task will load the local model."}</small>
+              </div>
+            )}
 
             {isBootstrapping && (
               <div className="runtime-progress">

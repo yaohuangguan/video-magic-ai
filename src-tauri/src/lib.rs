@@ -4,7 +4,7 @@ use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
@@ -16,6 +16,20 @@ use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager, State};
 struct RenderTaskState {
     pid: Arc<Mutex<Option<u32>>>,
     cancel_requested: Arc<AtomicBool>,
+}
+
+struct EngineWorker {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+    stderr_tail: Arc<Mutex<Vec<String>>>,
+    runtime_home: PathBuf,
+    device_mode: String,
+}
+
+#[derive(Clone, Default)]
+struct EngineWorkerState {
+    worker: Arc<Mutex<Option<EngineWorker>>>,
 }
 
 #[cfg(debug_assertions)]
@@ -361,6 +375,217 @@ fn configured_engine_command(
     }
 
     command
+}
+
+fn normalized_device_mode(device_mode: &str) -> String {
+    match device_mode {
+        "cpu" | "cuda" => device_mode.to_string(),
+        _ => "auto".to_string(),
+    }
+}
+
+fn stop_engine_worker(worker: &mut Option<EngineWorker>) {
+    if let Some(mut current) = worker.take() {
+        let _ = current.child.kill();
+        let _ = current.child.wait();
+    }
+}
+
+fn start_engine_worker(local: &Path, device_mode: &str) -> Result<EngineWorker, String> {
+    ensure_runtime_dirs(local)?;
+    let python = engine_python(local)?;
+    if !python.exists() {
+        return Err(format!(
+            "Local engine Python not found: {}. Run local AI setup first.",
+            python.display()
+        ));
+    }
+
+    let mut child = configured_engine_command(&python, local, Some(device_mode))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("Failed to start local AI worker: {error}"))?;
+
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "Failed to open AI worker stdin.".to_string())?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Failed to open AI worker stdout.".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "Failed to open AI worker stderr.".to_string())?;
+
+    let stderr_tail = Arc::new(Mutex::new(Vec::<String>::new()));
+    let stderr_tail_worker = Arc::clone(&stderr_tail);
+    std::thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            if let Ok(mut lines) = stderr_tail_worker.lock() {
+                lines.push(line);
+                if lines.len() > 60 {
+                    lines.remove(0);
+                }
+            }
+        }
+    });
+
+    Ok(EngineWorker {
+        child,
+        stdin,
+        stdout: BufReader::new(stdout),
+        stderr_tail,
+        runtime_home: local.to_path_buf(),
+        device_mode: normalized_device_mode(device_mode),
+    })
+}
+
+fn run_persistent_engine_request(
+    app: Option<&AppHandle>,
+    engine_state: &EngineWorkerState,
+    task_state: Option<&RenderTaskState>,
+    local: &Path,
+    request: Value,
+    device_mode: &str,
+    progress_event: Option<&str>,
+) -> Result<Value, String> {
+    let normalized_mode = normalized_device_mode(device_mode);
+    let mut slot = engine_state
+        .worker
+        .lock()
+        .map_err(|_| "Local AI worker state is unavailable.".to_string())?;
+
+    let should_restart = match slot.as_mut() {
+        Some(worker) => {
+            let exited = worker
+                .child
+                .try_wait()
+                .map_err(|error| format!("Could not inspect local AI worker: {error}"))?
+                .is_some();
+            exited || worker.runtime_home != local || worker.device_mode != normalized_mode
+        }
+        None => true,
+    };
+
+    if should_restart {
+        stop_engine_worker(&mut slot);
+        *slot = Some(start_engine_worker(local, &normalized_mode)?);
+    }
+
+    let pid = slot
+        .as_ref()
+        .map(|worker| worker.child.id())
+        .ok_or_else(|| "Local AI worker did not start.".to_string())?;
+
+    if let Some(task) = task_state {
+        task.cancel_requested.store(false, Ordering::SeqCst);
+        let mut active_pid = task
+            .pid
+            .lock()
+            .map_err(|_| "Render task state is unavailable.".to_string())?;
+        *active_pid = Some(pid);
+    }
+
+    {
+        let worker = slot
+            .as_mut()
+            .ok_or_else(|| "Local AI worker is unavailable.".to_string())?;
+        writeln!(worker.stdin, "{}", request)
+            .map_err(|error| format!("Failed to send request to local AI worker: {error}"))?;
+        worker
+            .stdin
+            .flush()
+            .map_err(|error| format!("Failed to flush local AI worker request: {error}"))?;
+    }
+
+    loop {
+        let mut line = String::new();
+        let read = {
+            let worker = slot
+                .as_mut()
+                .ok_or_else(|| "Local AI worker is unavailable.".to_string())?;
+            worker
+                .stdout
+                .read_line(&mut line)
+                .map_err(|error| format!("Failed to read local AI worker response: {error}"))?
+        };
+
+        if read == 0 {
+            let detail = slot
+                .as_ref()
+                .and_then(|worker| worker.stderr_tail.lock().ok().map(|lines| lines.join("\n")))
+                .unwrap_or_default();
+            stop_engine_worker(&mut slot);
+
+            if let Some(task) = task_state {
+                if let Ok(mut active_pid) = task.pid.lock() {
+                    *active_pid = None;
+                }
+                if task.cancel_requested.swap(false, Ordering::SeqCst) {
+                    if let (Some(app), Some(event)) = (app, progress_event) {
+                        let _ = app.emit(
+                            event,
+                            json!({
+                                "stage": "cancelled",
+                                "progress": 0.0,
+                                "message": "Render cancelled"
+                            }),
+                        );
+                    }
+                    return Err("Render cancelled.".to_string());
+                }
+            }
+
+            return Err(if detail.trim().is_empty() {
+                "Local AI worker exited unexpectedly.".to_string()
+            } else {
+                format!("Local AI worker exited unexpectedly.\n{detail}")
+            });
+        }
+
+        let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+            continue;
+        };
+
+        match value.get("type").and_then(Value::as_str) {
+            Some("progress") => {
+                if let (Some(app), Some(event), Some(progress)) =
+                    (app, progress_event, value.get("result"))
+                {
+                    let _ = app.emit(event, progress.clone());
+                }
+            }
+            Some("result") => {
+                if let Some(task) = task_state {
+                    if let Ok(mut active_pid) = task.pid.lock() {
+                        *active_pid = None;
+                    }
+                    task.cancel_requested.store(false, Ordering::SeqCst);
+                }
+                return Ok(value.get("result").cloned().unwrap_or(Value::Null));
+            }
+            Some("error") => {
+                if let Some(task) = task_state {
+                    if let Ok(mut active_pid) = task.pid.lock() {
+                        *active_pid = None;
+                    }
+                    task.cancel_requested.store(false, Ordering::SeqCst);
+                }
+                return Err(
+                    value
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("Unknown local AI worker error")
+                        .to_string(),
+                );
+            }
+            _ => {}
+        }
+    }
 }
 
 fn final_engine_message(stdout: &str, stderr: &str) -> Result<Value, String> {
@@ -769,11 +994,13 @@ async fn bootstrap_runtime(app: AppHandle, data_dir: String) -> Result<Value, St
 #[tauri::command]
 async fn preview_voice(
     app: AppHandle,
+    state: State<'_, EngineWorkerState>,
     voice: String,
     speed: f64,
     text: String,
     device_mode: String,
 ) -> Result<Value, String> {
+    let engine_state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let local = configured_runtime_home(&app)?
             .ok_or_else(|| "Local AI runtime is not configured.".to_string())?;
@@ -789,7 +1016,10 @@ async fn preview_voice(
             .join("previews")
             .join(format!("{voice}-preview.wav"));
 
-        let result = run_engine_request(
+        let result = run_persistent_engine_request(
+            None,
+            &engine_state,
+            None,
             &local,
             json!({
                 "id": "desktop-preview",
@@ -801,7 +1031,8 @@ async fn preview_voice(
                     "outputPath": preview_path
                 }
             }),
-            Some(device_mode.as_str()),
+            device_mode.as_str(),
+            None,
         )?;
 
         let path = result
@@ -843,6 +1074,7 @@ fn make_output_path(local: &Path, video_path: &str, output_dir: Option<String>) 
 fn render_video_sync(
     app: AppHandle,
     task_state: RenderTaskState,
+    engine_state: EngineWorkerState,
     video_path: String,
     text: String,
     voice: String,
@@ -857,13 +1089,6 @@ fn render_video_sync(
     let local = configured_runtime_home(&app)?
         .ok_or_else(|| "Local AI runtime is not configured. Run setup first.".to_string())?;
     ensure_runtime_dirs(&local)?;
-    let python = engine_python(&local)?;
-    if !python.exists() {
-        return Err(format!(
-            "Local engine Python not found: {}. Run local AI setup first.",
-            python.display()
-        ));
-    }
 
     let output_path = make_output_path(&local, &video_path, output_dir)?;
     let history_source_video = video_path.clone();
@@ -885,106 +1110,16 @@ fn render_video_sync(
         }
     });
 
-    task_state.cancel_requested.store(false, Ordering::SeqCst);
+    let result = run_persistent_engine_request(
+        Some(&app),
+        &engine_state,
+        Some(&task_state),
+        &local,
+        request,
+        device_mode.as_str(),
+        Some("videomagic://render-progress"),
+    )?;
 
-    let mut child = configured_engine_command(&python, &local, Some(device_mode.as_str()))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("Failed to start local engine: {error}"))?;
-
-    {
-        let mut slot = task_state
-            .pid
-            .lock()
-            .map_err(|_| "Render task state is unavailable.".to_string())?;
-        *slot = Some(child.id());
-    }
-
-    {
-        let stdin = child
-            .stdin
-            .as_mut()
-            .ok_or_else(|| "Failed to open engine stdin".to_string())?;
-        writeln!(stdin, "{}", request)
-            .map_err(|error| format!("Failed to send render request: {error}"))?;
-    }
-
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| "Failed to capture engine stderr".to_string())?;
-    let stderr_tail = Arc::new(Mutex::new(Vec::<String>::new()));
-    let stderr_tail_worker = Arc::clone(&stderr_tail);
-    let stderr_thread = std::thread::spawn(move || {
-        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-            if let Ok(mut lines) = stderr_tail_worker.lock() {
-                lines.push(line);
-                if lines.len() > 40 {
-                    lines.remove(0);
-                }
-            }
-        }
-    });
-
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "Failed to capture engine stdout".to_string())?;
-    let mut final_message: Option<Value> = None;
-
-    for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-        if let Ok(value) = serde_json::from_str::<Value>(&line) {
-            match value.get("type").and_then(Value::as_str) {
-                Some("progress") => {
-                    if let Some(progress) = value.get("result") {
-                        let _ = app.emit("videomagic://render-progress", progress.clone());
-                    }
-                }
-                Some("result" | "error") => final_message = Some(value),
-                _ => {}
-            }
-        }
-    }
-
-    let status = child
-        .wait()
-        .map_err(|error| format!("Local engine failed: {error}"))?;
-    let _ = stderr_thread.join();
-
-    if let Ok(mut slot) = task_state.pid.lock() {
-        *slot = None;
-    }
-
-    if task_state.cancel_requested.swap(false, Ordering::SeqCst) {
-        let _ = app.emit(
-            "videomagic://render-progress",
-            json!({"stage":"cancelled","progress":0.0,"message":"Render cancelled"}),
-        );
-        return Err("Render cancelled.".to_string());
-    }
-
-    if !status.success() && final_message.is_none() {
-        let detail = stderr_tail
-            .lock()
-            .map(|lines| lines.join("\n"))
-            .unwrap_or_default();
-        return Err(format!("Render process failed.\n{detail}"));
-    }
-
-    let message = final_message.ok_or_else(|| "Engine returned no final result.".to_string())?;
-    if message.get("type").and_then(Value::as_str) == Some("error") {
-        return Err(
-            message
-                .get("error")
-                .and_then(Value::as_str)
-                .unwrap_or("Unknown engine error")
-                .to_string(),
-        );
-    }
-
-    let result = message.get("result").cloned().unwrap_or(Value::Null);
     remember_render(
         &app,
         &history_source_video,
@@ -1004,6 +1139,7 @@ fn render_video_sync(
 async fn render_video(
     app: AppHandle,
     state: State<'_, RenderTaskState>,
+    engine: State<'_, EngineWorkerState>,
     video_path: String,
     text: String,
     voice: String,
@@ -1016,10 +1152,12 @@ async fn render_video(
     device_mode: String,
 ) -> Result<Value, String> {
     let task_state = state.inner().clone();
+    let engine_state = engine.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         render_video_sync(
             app,
             task_state,
+            engine_state,
             video_path,
             text,
             voice,
@@ -1075,8 +1213,20 @@ fn cancel_render(state: State<'_, RenderTaskState>) -> Result<bool, String> {
 pub fn run() {
     tauri::Builder::default()
         .manage(RenderTaskState::default())
+        .manage(EngineWorkerState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
+                let worker_state = {
+                    let state = window.state::<EngineWorkerState>();
+                    Arc::clone(&state.worker)
+                };
+                if let Ok(mut worker) = worker_state.lock() {
+                    stop_engine_worker(&mut worker);
+                };
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             runtime_status,
             runtime_diagnostics,
