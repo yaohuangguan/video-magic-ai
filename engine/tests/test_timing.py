@@ -226,6 +226,27 @@ class DirectorPlanTests(unittest.TestCase):
         )
         self.assertGreater(result["outputDurationSeconds"], 0)
 
+    def test_normalize_edit_plan_respects_target_duration_cap(self) -> None:
+        result = normalize_edit_plan(
+            {
+                "title": "Thirty second cut",
+                "narrationLanguage": "en",
+                "clips": [
+                    {"sourceStart": 0, "sourceEnd": 10, "speed": 1.0},
+                    {"sourceStart": 10, "sourceEnd": 20, "speed": 1.0},
+                ],
+            },
+            source_duration=20.0,
+            target_duration=8.0,
+        )
+
+        self.assertLessEqual(result["outputDurationSeconds"], 8.01)
+        self.assertAlmostEqual(
+            result["clips"][1]["outputStart"],
+            result["clips"][0]["outputEnd"],
+            places=3,
+        )
+
     def test_normalize_edit_plan_rejects_empty_clip_list(self) -> None:
         with self.assertRaisesRegex(ValueError, "no clips"):
             normalize_edit_plan(

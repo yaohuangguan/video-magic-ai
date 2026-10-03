@@ -7,6 +7,9 @@ import os
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
+
 from .media import probe_video
 
 DEFAULT_VIDEO_MODEL = "openbmb/MiniCPM-V-4.6"
@@ -121,6 +124,45 @@ def _language_hint(value: str | None) -> str:
     return "auto"
 
 
+def _timestamp_frames(
+    frames: np.ndarray,
+    source_duration: float,
+) -> np.ndarray:
+    if len(frames) == 0:
+        return frames
+
+    annotated: list[np.ndarray] = []
+    denominator = max(len(frames) - 1, 1)
+
+    for index, frame in enumerate(frames):
+        seconds = source_duration * index / denominator
+        image = Image.fromarray(frame).convert("RGB")
+        draw = ImageDraw.Draw(image)
+
+        try:
+            font = ImageFont.load_default(size=max(18, min(image.size) // 14))
+        except TypeError:
+            font = ImageFont.load_default()
+
+        label = f"TIME {seconds:05.1f}s"
+        bbox = draw.textbbox((0, 0), label, font=font)
+        width = bbox[2] - bbox[0]
+        height = bbox[3] - bbox[1]
+        pad = max(6, height // 4)
+        x = 10
+        y = 10
+
+        draw.rounded_rectangle(
+            (x - pad, y - pad, x + width + pad, y + height + pad),
+            radius=max(4, pad),
+            fill=(0, 0, 0),
+        )
+        draw.text((x, y), label, fill=(255, 255, 255), font=font)
+        annotated.append(np.asarray(image, dtype=np.uint8))
+
+    return np.stack(annotated, axis=0)
+
+
 def build_director_prompt(
     instruction: str,
     source_duration: float,
@@ -139,6 +181,7 @@ You are the local AI director inside VideoMagic.
 
 Watch the supplied source video and turn the user's instruction into a deterministic edit decision list.
 The actual cutting will be performed by FFmpeg, so your output must describe source time ranges precisely.
+Sampled frames are visibly stamped with labels such as TIME 04.0s. Treat those visible timestamps as authoritative anchors for sourceStart/sourceEnd.
 
 SOURCE DURATION: {source_duration:.3f} seconds
 USER INSTRUCTION:
@@ -173,6 +216,7 @@ Rules:
 - Clips may be reordered only when the user's storytelling request clearly benefits from it.
 - Avoid duplicate or nearly identical source ranges.
 - Keep narration concise enough to fit inside each selected clip after speed adjustment.
+- When a target duration is supplied, verify the arithmetic before returning JSON: sum((sourceEnd-sourceStart)/speed) must be within 5% of that target whenever the requested content makes it possible.
 - If the user asks for no narration, set narration to an empty string for every clip.
 - narrationLanguage must follow this explicit hint when it is not auto: {language_hint}.
 - If narrationLanguage is auto, use the language requested by the user; otherwise match the user's instruction language.
@@ -182,6 +226,7 @@ Rules:
 def normalize_edit_plan(
     raw_plan: dict[str, Any],
     source_duration: float,
+    target_duration: float | None = None,
 ) -> dict[str, Any]:
     raw_clips = raw_plan.get("clips")
     if not isinstance(raw_clips, list) or not raw_clips:
@@ -229,6 +274,34 @@ def normalize_edit_plan(
     if not clips:
         raise ValueError("Video AI returned no usable clip ranges.")
 
+    if target_duration and target_duration > 0 and output_cursor > target_duration * 1.05:
+        scale = target_duration / output_cursor
+        adjusted: list[dict[str, Any]] = []
+        output_cursor = 0.0
+
+        for clip in clips:
+            source_start = float(clip["sourceStart"])
+            speed = float(clip["speed"])
+            current_output = float(clip["outputEnd"]) - float(clip["outputStart"])
+            desired_output = max(0.12 / speed, current_output * scale)
+            source_end = min(
+                float(clip["sourceEnd"]),
+                source_start + desired_output * speed,
+            )
+            actual_output = (source_end - source_start) / speed
+
+            adjusted.append(
+                {
+                    **clip,
+                    "sourceEnd": round(source_end, 3),
+                    "outputStart": round(output_cursor, 3),
+                    "outputEnd": round(output_cursor + actual_output, 3),
+                }
+            )
+            output_cursor += actual_output
+
+        clips = adjusted
+
     narration_language = _language_hint(str(raw_plan.get("narrationLanguage") or "auto"))
     if narration_language == "auto":
         narration_language = "zh"
@@ -270,6 +343,7 @@ def plan_video_edit(
         num_frames=frame_budget,
         backend="pyav",
     )
+    video_frames = _timestamp_frames(video_frames, source_duration)
 
     messages = [
         {
@@ -324,6 +398,10 @@ def plan_video_edit(
         clean_up_tokenization_spaces=False,
     )[0]
 
-    plan = normalize_edit_plan(_json_object(response), source_duration)
+    plan = normalize_edit_plan(
+        _json_object(response),
+        source_duration,
+        target_duration=target_duration,
+    )
     plan["rawModelResponse"] = response
     return plan
