@@ -50,6 +50,7 @@ def _configure_text_cache() -> None:
 def get_pipeline() -> tuple[Any, str]:
     global _pipeline, _pipeline_device
 
+    forced = os.environ.get("VIDEOMAGIC_TTS_DEVICE", "").strip().lower()
     device = _resolve_device()
     if _pipeline is not None and _pipeline_device == device:
         return _pipeline, device
@@ -57,13 +58,25 @@ def get_pipeline() -> tuple[Any, str]:
     _configure_text_cache()
     from kokoro import KPipeline
 
-    _pipeline = KPipeline(
-        lang_code="z",
-        repo_id=REPO_ID,
-        device=device,
-    )
-    _pipeline_device = device
-    return _pipeline, device
+    try:
+        _pipeline = KPipeline(
+            lang_code="z",
+            repo_id=REPO_ID,
+            device=device,
+        )
+        _pipeline_device = device
+        return _pipeline, device
+    except Exception:
+        if device != "cuda" or forced == "cuda":
+            raise
+
+        _pipeline = KPipeline(
+            lang_code="z",
+            repo_id=REPO_ID,
+            device="cpu",
+        )
+        _pipeline_device = "cpu"
+        return _pipeline, "cpu"
 
 
 def split_script(text: str) -> list[str]:

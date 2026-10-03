@@ -12,6 +12,27 @@ type VoicePreset = {
   tag: string;
 };
 
+type InferenceMode = "auto" | "cuda" | "cpu";
+
+type RecentProject = {
+  path: string;
+  name: string;
+  lastOpened: number;
+  exists: boolean;
+};
+
+type CreatorPreset = {
+  id: string;
+  name: string;
+  voice: string;
+  speed: number;
+  originalVolume: number;
+  ducking: boolean;
+  autoTiming: boolean;
+  subtitles: boolean;
+  custom?: boolean;
+};
+
 type RenderResult = {
   narrationPath?: string;
   video?: {
@@ -60,9 +81,44 @@ type SavedProject = {
   autoTiming: boolean;
   subtitles: boolean;
   outputDir: string;
+  deviceMode: InferenceMode;
 };
 
 const PROJECT_STORAGE_KEY = "videomagic.project.v1";
+const PRESET_STORAGE_KEY = "videomagic.creator-presets.v1";
+
+const builtinPresets: CreatorPreset[] = [
+  {
+    id: "short-form",
+    name: "Short-form punchy",
+    voice: "zm_009",
+    speed: 1.15,
+    originalVolume: 34,
+    ducking: true,
+    autoTiming: true,
+    subtitles: true,
+  },
+  {
+    id: "storytelling",
+    name: "Storytelling",
+    voice: "zm_010",
+    speed: 1.0,
+    originalVolume: 42,
+    ducking: true,
+    autoTiming: true,
+    subtitles: true,
+  },
+  {
+    id: "documentary",
+    name: "Documentary",
+    voice: "zm_011",
+    speed: 0.95,
+    originalVolume: 48,
+    ducking: true,
+    autoTiming: true,
+    subtitles: true,
+  },
+];
 
 const voices: VoicePreset[] = [
   { id: "zm_009", name: "Punchy Male", description: "Sharper pacing for commentary and short-form clips.", tag: "Fast" },
@@ -110,6 +166,12 @@ function App() {
   const [isDragging, setIsDragging] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [projectFilePath, setProjectFilePath] = useState("");
+  const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
+  const [showRecentProjects, setShowRecentProjects] = useState(false);
+  const [customPresets, setCustomPresets] = useState<CreatorPreset[]>([]);
+  const [showPresetForm, setShowPresetForm] = useState(false);
+  const [presetName, setPresetName] = useState("");
+  const [deviceMode, setDeviceMode] = useState<InferenceMode>("auto");
 
   const previewAudio = useRef<HTMLAudioElement | null>(null);
   const projectHydrated = useRef(false);
@@ -140,8 +202,18 @@ function App() {
     }
   }
 
+  async function refreshRecentProjects() {
+    try {
+      const items = await invoke<RecentProject[]>("recent_projects");
+      setRecentProjects(items);
+    } catch {
+      setRecentProjects([]);
+    }
+  }
+
   useEffect(() => {
     void refreshRuntime();
+    void refreshRecentProjects();
 
     let disposed = false;
     const cleanups: Array<() => void> = [];
@@ -189,6 +261,9 @@ function App() {
         if (typeof saved.autoTiming === "boolean") setAutoTiming(saved.autoTiming);
         if (typeof saved.subtitles === "boolean") setSubtitles(saved.subtitles);
         if (typeof saved.outputDir === "string") setOutputDir(saved.outputDir);
+        if (saved.deviceMode === "auto" || saved.deviceMode === "cuda" || saved.deviceMode === "cpu") {
+          setDeviceMode(saved.deviceMode);
+        }
       }
     } catch {
       localStorage.removeItem(PROJECT_STORAGE_KEY);
@@ -196,6 +271,23 @@ function App() {
       projectHydrated.current = true;
     }
   }, []);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(PRESET_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as CreatorPreset[];
+      if (Array.isArray(parsed)) {
+        setCustomPresets(parsed.filter((item) => item && item.custom));
+      }
+    } catch {
+      localStorage.removeItem(PRESET_STORAGE_KEY);
+    }
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(PRESET_STORAGE_KEY, JSON.stringify(customPresets));
+  }, [customPresets]);
 
   useEffect(() => {
     if (!projectHydrated.current) return;
@@ -212,6 +304,7 @@ function App() {
         autoTiming,
         subtitles,
         outputDir,
+        deviceMode,
       };
       localStorage.setItem(PROJECT_STORAGE_KEY, JSON.stringify(snapshot));
       setLastSavedAt(Date.now());
@@ -228,6 +321,7 @@ function App() {
     autoTiming,
     subtitles,
     outputDir,
+    deviceMode,
   ]);
 
   useEffect(() => {
@@ -271,16 +365,19 @@ function App() {
     };
   }, []);
 
-  async function setupRuntime() {
-    const selected = await open({
-      multiple: false,
-      directory: true,
-      title: "Choose where VideoMagic AI data should live",
-    });
+  async function setupRuntime(repairExisting = false) {
+    let target = repairExisting && runtime?.dataDir ? runtime.dataDir : "";
 
-    if (typeof selected !== "string") return;
+    if (!target) {
+      const selected = await open({
+        multiple: false,
+        directory: true,
+        title: "Choose where VideoMagic AI data should live",
+      });
 
-    const target = dataDirectory(selected);
+      if (typeof selected !== "string") return;
+      target = dataDirectory(selected);
+    }
     setIsBootstrapping(true);
     setRuntimeProgress(0.02);
     setRuntimeMessage("Preparing local AI runtime");
@@ -348,6 +445,7 @@ function App() {
         voice,
         speed,
         text: script.trim(),
+        deviceMode,
       });
       const audio = new Audio(result.audioDataUrl);
       previewAudio.current = audio;
@@ -394,6 +492,7 @@ function App() {
         ducking,
         autoTiming,
         subtitles,
+        deviceMode,
       });
 
       const rendered = result.video?.path ?? "";
@@ -438,6 +537,7 @@ function App() {
       autoTiming,
       subtitles,
       outputDir,
+      deviceMode,
     };
   }
 
@@ -453,6 +553,9 @@ function App() {
     if (typeof project.autoTiming === "boolean") setAutoTiming(project.autoTiming);
     if (typeof project.subtitles === "boolean") setSubtitles(project.subtitles);
     if (typeof project.outputDir === "string") setOutputDir(project.outputDir);
+    if (project.deviceMode === "auto" || project.deviceMode === "cuda" || project.deviceMode === "cpu") {
+      setDeviceMode(project.deviceMode);
+    }
     setOutputPath("");
     setRenderProgress(0);
     setRenderStage("idle");
@@ -482,6 +585,7 @@ function App() {
       setProjectFilePath(target);
       setLastSavedAt(Date.now());
       setStatus("Project saved");
+      await refreshRecentProjects();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     }
@@ -506,9 +610,72 @@ function App() {
       setProjectFilePath(result.path);
       setLastSavedAt(Date.now());
       setStatus("Project opened");
+      await refreshRecentProjects();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     }
+  }
+
+  async function openRecentProject(path: string) {
+    if (isGenerating) return;
+    try {
+      const result = await invoke<ProjectFileResult>("load_project_file", { path });
+      applyProject(result.project);
+      setProjectFilePath(result.path);
+      setLastSavedAt(Date.now());
+      setShowRecentProjects(false);
+      setStatus("Project opened");
+      await refreshRecentProjects();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+      await refreshRecentProjects();
+    }
+  }
+
+  async function removeRecentProject(path: string) {
+    await invoke<boolean>("remove_recent_project", { path });
+    await refreshRecentProjects();
+  }
+
+  async function clearRecentProjects() {
+    await invoke<boolean>("clear_recent_projects");
+    setRecentProjects([]);
+  }
+
+  function applyCreatorPreset(preset: CreatorPreset) {
+    if (voices.some((item) => item.id === preset.voice)) {
+      setVoice(preset.voice);
+    }
+    setSpeed(preset.speed);
+    setOriginalVolume(preset.originalVolume);
+    setDucking(preset.ducking);
+    setAutoTiming(preset.autoTiming);
+    setSubtitles(preset.subtitles);
+    setStatus("Preset applied: " + preset.name);
+  }
+
+  function saveCreatorPreset() {
+    const name = presetName.trim();
+    if (!name) return;
+    const preset: CreatorPreset = {
+      id: "custom-" + Date.now(),
+      name,
+      voice,
+      speed,
+      originalVolume,
+      ducking,
+      autoTiming,
+      subtitles,
+      custom: true,
+    };
+    setCustomPresets((current) => [preset, ...current].slice(0, 12));
+    setPresetName("");
+    setShowPresetForm(false);
+    setStatus("Creator preset saved");
+  }
+
+  function deleteCreatorPreset(id: string) {
+    setCustomPresets((current) => current.filter((item) => item.id !== id));
   }
 
   function newProject() {
@@ -574,6 +741,7 @@ function App() {
     autoTiming,
     subtitles,
     projectFilePath,
+    deviceMode,
   ]);
 
   const progressWidth = String(Math.max(0, Math.min(100, renderProgress * 100))) + "%";
@@ -608,6 +776,18 @@ function App() {
             title="Open project (Ctrl+O)"
           >
             Open
+          </button>
+          <button
+            className="topbar-button"
+            type="button"
+            disabled={isGenerating}
+            onClick={() => {
+              void refreshRecentProjects();
+              setShowRecentProjects(true);
+            }}
+            title="Recent projects"
+          >
+            Recent
           </button>
           <button
             className="topbar-button emphasis"
@@ -822,15 +1002,61 @@ function App() {
             )}
 
             {!runtime?.portableReady && (
+              <div className="runtime-actions">
+                <button
+                  className="secondary-button full-width"
+                  type="button"
+                  disabled={isBootstrapping}
+                  onClick={() => void setupRuntime(Boolean(runtime?.configured && runtime?.dataDir))}
+                >
+                  {isBootstrapping
+                    ? "Repairing local runtime…"
+                    : runtime?.configured && runtime?.dataDir
+                      ? "Repair runtime"
+                      : "Set up local runtime"}
+                </button>
+                {runtime?.configured && runtime?.dataDir && (
+                  <button
+                    className="text-button"
+                    type="button"
+                    disabled={isBootstrapping}
+                    onClick={() => void setupRuntime(false)}
+                  >
+                    Change location
+                  </button>
+                )}
+              </div>
+            )}
+
+            {runtime?.portableReady && (
               <button
-                className="secondary-button full-width"
+                className="text-button runtime-repair"
                 type="button"
                 disabled={isBootstrapping}
-                onClick={setupRuntime}
+                onClick={() => void setupRuntime(true)}
               >
-                {isBootstrapping ? "Installing local runtime…" : "Set up local runtime"}
+                Verify / repair runtime
               </button>
             )}
+
+            <div className="inference-mode">
+              <div>
+                <strong>Inference</strong>
+                <span>Auto prefers CUDA and falls back to CPU.</span>
+              </div>
+              <div className="segmented-control">
+                {(["auto", "cuda", "cpu"] as InferenceMode[]).map((mode) => (
+                  <button
+                    type="button"
+                    key={mode}
+                    className={deviceMode === mode ? "selected" : ""}
+                    onClick={() => setDeviceMode(mode)}
+                  >
+                    {mode === "auto" ? "Auto" : mode === "cuda" ? "GPU" : "CPU"}
+                  </button>
+                ))}
+              </div>
+            </div>
           </section>
 
           <section className="inspector-section">
@@ -849,6 +1075,78 @@ function App() {
                 {isPreviewing ? "■" : "▶"}
               </button>
             </div>
+
+            <div className="preset-toolbar">
+              <select
+                defaultValue=""
+                onChange={(event) => {
+                  const preset = [...builtinPresets, ...customPresets].find(
+                    (item) => item.id === event.target.value,
+                  );
+                  if (preset) applyCreatorPreset(preset);
+                  event.currentTarget.value = "";
+                }}
+              >
+                <option value="" disabled>Apply creator preset…</option>
+                <optgroup label="Built in">
+                  {builtinPresets.map((preset) => (
+                    <option key={preset.id} value={preset.id}>{preset.name}</option>
+                  ))}
+                </optgroup>
+                {customPresets.length > 0 && (
+                  <optgroup label="My presets">
+                    {customPresets.map((preset) => (
+                      <option key={preset.id} value={preset.id}>{preset.name}</option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
+              <button
+                className="text-button"
+                type="button"
+                onClick={() => setShowPresetForm((current) => !current)}
+              >
+                Save current
+              </button>
+            </div>
+
+            {showPresetForm && (
+              <div className="preset-form">
+                <input
+                  value={presetName}
+                  onChange={(event) => setPresetName(event.target.value)}
+                  placeholder="Preset name"
+                  autoFocus
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") saveCreatorPreset();
+                    if (event.key === "Escape") setShowPresetForm(false);
+                  }}
+                />
+                <button type="button" onClick={saveCreatorPreset} disabled={!presetName.trim()}>
+                  Save
+                </button>
+              </div>
+            )}
+
+            {customPresets.length > 0 && (
+              <div className="preset-chips">
+                {customPresets.slice(0, 5).map((preset) => (
+                  <div className="preset-chip" key={preset.id}>
+                    <button type="button" onClick={() => applyCreatorPreset(preset)}>
+                      {preset.name}
+                    </button>
+                    <button
+                      type="button"
+                      className="preset-delete"
+                      aria-label={"Delete preset " + preset.name}
+                      onClick={() => deleteCreatorPreset(preset.id)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
 
             <div className="voice-list">
               {voices.map((item) => (
@@ -972,6 +1270,71 @@ function App() {
           </section>
         </aside>
       </section>
+
+      {showRecentProjects && (
+        <div className="modal-backdrop" onMouseDown={() => setShowRecentProjects(false)}>
+          <section className="recent-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <span className="runtime-kicker">PROJECTS</span>
+                <h2>Recent projects</h2>
+                <p>Open a recent .vmagic project without browsing for the file again.</p>
+              </div>
+              <button
+                className="icon-button"
+                type="button"
+                aria-label="Close recent projects"
+                onClick={() => setShowRecentProjects(false)}
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="recent-list">
+              {recentProjects.length === 0 ? (
+                <div className="empty-recent">
+                  <strong>No recent projects yet</strong>
+                  <span>Projects you save or open will appear here.</span>
+                </div>
+              ) : (
+                recentProjects.map((project) => (
+                  <div className={"recent-row " + (!project.exists ? "missing" : "")} key={project.path}>
+                    <button
+                      className="recent-open"
+                      type="button"
+                      disabled={!project.exists}
+                      onClick={() => void openRecentProject(project.path)}
+                    >
+                      <div className="recent-icon">VM</div>
+                      <div>
+                        <strong>{project.name}</strong>
+                        <span>{project.path}</span>
+                      </div>
+                    </button>
+                    <button
+                      className="recent-remove"
+                      type="button"
+                      aria-label={"Remove " + project.name + " from recent projects"}
+                      onClick={() => void removeRecentProject(project.path)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="modal-footer">
+              <button className="text-button" type="button" onClick={() => void clearRecentProjects()}>
+                Clear list
+              </button>
+              <button className="secondary-button" type="button" onClick={() => setShowRecentProjects(false)}>
+                Done
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }
