@@ -159,7 +159,7 @@ if ($LASTEXITCODE -ne 0) {
 
 $status = [ordered]@{
     ready = $true
-    schemaVersion = 2
+    schemaVersion = 3
     engineVersion = "0.2.0"
     python = $pythonExe
     ffmpeg = $ffmpegExe

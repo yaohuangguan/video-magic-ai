@@ -58,7 +58,10 @@
 - [x] Real FFmpeg/NVENC source cutting from the local AI edit plan.
 - [x] SmolVLM2 500M Fast mode verified on RTX 2080 SUPER CUDA.
 - [x] 8GB-class GPU Auto policy defaults to Fast; 2.2B remains an explicit Quality option.
-- [x] Runtime schema v2 upgrades older local runtimes in place.
+- [x] Runtime schema v3 upgrades older runtimes with video-model dependencies in place.
+- [x] Natural-language target-duration parsing for seconds/minutes in English and Chinese.
+- [x] Deterministic duration-budget enforcement with motion-based supplementation for small-model plans.
+- [x] Automatic runtime repair/setup starts when a source video is loaded.
 - [ ] Evaluate a quantized 4B-class quality model for stronger semantic editing on supported GPUs.
 - [x] Source-audio waveform visualization behind the narration timeline.
 - [x] Left/right resize handles directly on narration blocks.

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .media import (
+    clip_motion_score,
     extract_analysis_clip,
     mix_voiceover,
     probe_video,
@@ -144,6 +145,7 @@ def _analyze_video(
             clip_path = analysis_root / f"{scene_id}.mp4"
             extract_analysis_clip(video_path, start, end, clip_path)
             result = describe_clip(clip_path, mode=vision_mode)
+            motion_score = clip_motion_score(clip_path)
             clip_path.unlink(missing_ok=True)
 
             model_id = str(result.get("model") or model_id or "")
@@ -154,10 +156,19 @@ def _analyze_video(
                     "start": start,
                     "end": end,
                     "description": str(result.get("text") or "").strip(),
+                    "motionScoreRaw": motion_score,
                 }
             )
     finally:
         shutil.rmtree(analysis_root, ignore_errors=True)
+
+    raw_scores = [float(scene.get("motionScoreRaw", 0.0)) for scene in scenes]
+    low = min(raw_scores) if raw_scores else 0.0
+    high = max(raw_scores) if raw_scores else 0.0
+    spread = max(high - low, 1e-9)
+    for scene in scenes:
+        raw = float(scene.pop("motionScoreRaw", 0.0))
+        scene["motionScore"] = round((raw - low) / spread if high > low else 0.5, 4)
 
     return {
         "videoPath": video_path,

@@ -20,6 +20,7 @@ type SceneIndexItem = {
   start: number;
   end: number;
   description: string;
+  motionScore?: number;
 };
 
 type VideoAnalysisResult = {
@@ -352,6 +353,7 @@ function App() {
   const timelineTrackRef = useRef<HTMLDivElement | null>(null);
   const projectHydrated = useRef(false);
   const videoPathRef = useRef("");
+  const autoRuntimeAttemptRef = useRef("");
   const runtimeRepairAttempted = useRef(false);
   const runtimeFirstRunAttempted = useRef(false);
 
@@ -535,6 +537,21 @@ function App() {
   useEffect(() => {
     videoPathRef.current = videoPath;
   }, [videoPath]);
+
+  useEffect(() => {
+    if (
+      !videoPath ||
+      !runtime ||
+      runtime.ready ||
+      isBootstrapping ||
+      autoRuntimeAttemptRef.current === videoPath
+    ) {
+      return;
+    }
+
+    autoRuntimeAttemptRef.current = videoPath;
+    void setupRuntime(true);
+  }, [videoPath, runtime?.ready, runtime?.dataDir, isBootstrapping]);
 
   useEffect(() => {
     try {
@@ -781,6 +798,7 @@ function App() {
   }
 
   function selectVideoPath(path: string) {
+    autoRuntimeAttemptRef.current = "";
     setVideoPath(path);
     setWaveform([]);
     setWaveformLoading(false);
@@ -1471,6 +1489,7 @@ function App() {
     previewAudio.current?.pause();
     setIsPreviewing(false);
     setProjectFilePath("");
+    autoRuntimeAttemptRef.current = "";
     setVideoPath("");
     setVideoInfo(null);
     setWaveform([]);
