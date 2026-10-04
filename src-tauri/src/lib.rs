@@ -222,6 +222,15 @@ fn remember_recent_project(app: &AppHandle, target: &Path) -> Result<(), String>
     write_recent_projects(app, &items)
 }
 
+fn default_runtime_home(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| format!("Could not resolve default local AI data directory: {error}"))?;
+    Ok(dir.join("runtime-data"))
+}
+
+
 fn configured_runtime_home(app: &AppHandle) -> Result<Option<PathBuf>, String> {
     if let Some(path) = env::var_os("VIDEOMAGIC_HOME") {
         return Ok(Some(PathBuf::from(path)));
@@ -678,6 +687,7 @@ fn run_engine_request(local: &Path, request: Value, device_mode: Option<&str>) -
 fn runtime_status_impl(app: &AppHandle) -> Result<Value, String> {
     let configured = configured_runtime_home(app)?;
     let Some(home) = configured else {
+        let default_home = default_runtime_home(app)?;
         return Ok(json!({
             "ready": false,
             "portableReady": false,
@@ -686,8 +696,8 @@ fn runtime_status_impl(app: &AppHandle) -> Result<Value, String> {
             "needsUpdate": false,
             "schemaVersion": 0,
             "requiredSchemaVersion": REQUIRED_RUNTIME_SCHEMA,
-            "dataDir": Value::Null,
-            "message": "Choose a data folder to install the local AI runtime."
+            "dataDir": default_home,
+            "message": "VideoMagic will set up its local AI runtime automatically."
         }));
     };
 
