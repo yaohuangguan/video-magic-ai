@@ -353,6 +353,7 @@ function App() {
   const projectHydrated = useRef(false);
   const videoPathRef = useRef("");
   const runtimeRepairAttempted = useRef(false);
+  const runtimeFirstRunAttempted = useRef(false);
 
   const canGenerate = Boolean(
     runtime?.ready &&
@@ -498,6 +499,22 @@ function App() {
   useEffect(() => {
     setEngineWarm(false);
   }, [deviceMode]);
+
+  useEffect(() => {
+    if (
+      !runtime ||
+      runtime.configured ||
+      !runtime.dataDir ||
+      isBootstrapping ||
+      runtimeFirstRunAttempted.current
+    ) {
+      return;
+    }
+
+    runtimeFirstRunAttempted.current = true;
+    setStatus("Setting up VideoMagic local AI automatically…");
+    void setupRuntime(true);
+  }, [runtime?.configured, runtime?.dataDir, isBootstrapping]);
 
   useEffect(() => {
     if (
@@ -2331,7 +2348,7 @@ function App() {
             <p>
               {runtime?.dataDir
                 ? runtime.dataDir
-                : "Choose a drive or folder for Python, models, cache and FFmpeg."}
+                : "VideoMagic will choose a private local data folder automatically."}
             </p>
 
             {runtime?.ready && (
@@ -2360,15 +2377,15 @@ function App() {
                   className="secondary-button full-width"
                   type="button"
                   disabled={isBootstrapping}
-                  onClick={() => void setupRuntime(Boolean(runtime?.configured && runtime?.dataDir))}
+                  onClick={() => void setupRuntime(Boolean(runtime?.dataDir))}
                 >
                   {isBootstrapping
-                    ? "Repairing local runtime…"
+                    ? "Setting up local AI…"
                     : runtime?.configured && runtime?.dataDir
                       ? "Repair runtime"
-                      : "Set up local runtime"}
+                      : "Retry automatic setup"}
                 </button>
-                {runtime?.configured && runtime?.dataDir && (
+                {runtime?.dataDir && (
                   <button
                     className="text-button"
                     type="button"
