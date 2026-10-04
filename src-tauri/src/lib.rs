@@ -1115,11 +1115,13 @@ async fn video_waveform(
 #[tauri::command]
 async fn analyze_video(
     app: AppHandle,
+    task: State<'_, RenderTaskState>,
     state: State<'_, EngineWorkerState>,
     video_path: String,
     vision_mode: String,
     device_mode: String,
 ) -> Result<Value, String> {
+    let task_state = task.inner().clone();
     let engine_state = state.inner().clone();
     let app_for_worker = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -1128,7 +1130,7 @@ async fn analyze_video(
         run_persistent_engine_request(
             Some(&app_for_worker),
             &engine_state,
-            None,
+            Some(&task_state),
             &local,
             json!({
                 "id": "desktop-analyze-video",

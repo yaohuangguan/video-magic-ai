@@ -798,6 +798,7 @@ function App() {
   }
 
   function selectVideoPath(path: string) {
+    void invoke<boolean>("cancel_render").catch(() => {});
     autoRuntimeAttemptRef.current = "";
     setVideoPath(path);
     setWaveform([]);
@@ -1166,7 +1167,7 @@ function App() {
   }
 
   async function cancelRender() {
-    setStatus("Cancelling render…");
+    setStatus("Cancelling local task…");
     try {
       await invoke<boolean>("cancel_render");
       setEngineWarm(false);
@@ -1821,15 +1822,28 @@ function App() {
                   </span>
                 </div>
               </div>
-              {videoPath && runtime?.ready && !isAnalyzing && (
-                <button
-                  className="text-button"
-                  type="button"
-                  disabled={isAiEditing}
-                  onClick={() => void analyzeSourceVideo(videoPath)}
-                >
-                  Re-analyze
-                </button>
+              {videoPath && runtime?.ready && (
+                isAnalyzing ? (
+                  <button
+                    className="text-button danger"
+                    type="button"
+                    onClick={() => {
+                      void cancelRender();
+                      setAnalysisMessage("Analysis cancelled");
+                    }}
+                  >
+                    Cancel
+                  </button>
+                ) : (
+                  <button
+                    className="text-button"
+                    type="button"
+                    disabled={isAiEditing}
+                    onClick={() => void analyzeSourceVideo(videoPath)}
+                  >
+                    Re-analyze
+                  </button>
+                )
               )}
             </div>
 

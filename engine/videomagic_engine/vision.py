@@ -95,7 +95,12 @@ def _load_model(mode: str = "auto") -> tuple[Any, Any, str, str]:
     return model, processor, model_id, device
 
 
-def _run(messages: list[dict[str, Any]], mode: str, max_new_tokens: int = 180) -> dict[str, Any]:
+def _run(
+    messages: list[dict[str, Any]],
+    mode: str,
+    max_new_tokens: int = 180,
+    video_metadata: list[Any] | None = None,
+) -> dict[str, Any]:
     model, processor, model_id, device = _load_model(mode)
 
     import torch
@@ -106,11 +111,11 @@ def _run(messages: list[dict[str, Any]], mode: str, max_new_tokens: int = 180) -
         for content in message.get("content", [])
         if isinstance(content, dict)
     )
-    processor_kwargs = (
-        {"do_sample_frames": False}
-        if has_presampled_video
-        else None
-    )
+    processor_kwargs = None
+    if has_presampled_video:
+        processor_kwargs = {"do_sample_frames": False}
+        if video_metadata:
+            processor_kwargs["video_metadata"] = video_metadata
     inputs = processor.apply_chat_template(
         messages,
         add_generation_prompt=True,
@@ -142,14 +147,20 @@ def _sample_clip_frames(
     clip_path: str | Path,
     output_dir: str | Path,
     max_frames: int = 12,
-) -> list[str]:
+) -> tuple[list[str], dict[str, Any]]:
     import av
 
     destination = Path(output_dir)
     destination.mkdir(parents=True, exist_ok=True)
     frames: list[str] = []
+    metadata: dict[str, Any] = {}
 
     with av.open(str(Path(clip_path))) as container:
+        stream = container.streams.video[0]
+        fps = float(stream.average_rate) if stream.average_rate else 2.0
+        width = int(stream.width or 0) or None
+        height = int(stream.height or 0) or None
+
         for frame in container.decode(video=0):
             if len(frames) >= max_frames:
                 break
@@ -157,9 +168,19 @@ def _sample_clip_frames(
             frame.to_image().save(path, "JPEG", quality=86)
             frames.append(str(path))
 
+        duration = len(frames) / max(fps, 0.001)
+        metadata = {
+            "total_num_frames": len(frames),
+            "fps": fps,
+            "width": width,
+            "height": height,
+            "duration": duration,
+            "frames_indices": list(range(len(frames))),
+        }
+
     if not frames:
         raise RuntimeError("Video clip produced no decodable frames.")
-    return frames
+    return frames, metadata
 
 
 def describe_clip(
@@ -174,7 +195,10 @@ def describe_clip(
     )
 
     with tempfile.TemporaryDirectory(prefix="videomagic-frames-") as directory:
-        frame_paths = _sample_clip_frames(clip_path, directory)
+        frame_paths, metadata_dict = _sample_clip_frames(clip_path, directory)
+        from transformers.video_utils import VideoMetadata
+
+        metadata = VideoMetadata(**metadata_dict)
         return _run(
             [
                 {
@@ -187,6 +211,7 @@ def describe_clip(
             ],
             mode,
             max_new_tokens=110,
+            video_metadata=[metadata],
         )
 
 
