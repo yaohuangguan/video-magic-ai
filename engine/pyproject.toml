@@ -1,13 +1,17 @@
 [project]
 name = "videomagic-engine"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local AI narration and media engine for VideoMagic"
 requires-python = ">=3.11"
 dependencies = [
   "kokoro>=0.9.4",
-  "misaki[zh]",
+  "misaki[zh,en]",
   "numpy>=1.26",
-  "soundfile>=0.12"
+  "soundfile>=0.12",
+  "transformers>=4.49",
+  "accelerate>=1.2",
+  "pillow>=10.0",
+  "av>=13.0"
 ]
 
 [project.scripts]
@@ -16,3 +20,6 @@ videomagic-engine = "videomagic_engine.main:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["videomagic_engine"]

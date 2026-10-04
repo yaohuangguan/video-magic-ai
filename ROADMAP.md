@@ -10,7 +10,7 @@
 ## Milestone 2 — First real narration
 - [x] Python 3.11 local engine.
 - [x] CUDA PyTorch on RTX 2080 SUPER.
-- [x] Kokoro Mandarin fixed voices.
+- [x] Kokoro Mandarin plus American/British English fixed voices.
 - [x] Mandarin script -> WAV without a cloud TTS API.
 - [x] Model/cache paths moved off C drive on the dev PC.
 - [x] Standalone first-run runtime bootstrap with managed Python, Torch, Kokoro and FFmpeg.
@@ -52,6 +52,14 @@
 - [x] Timeline persistence in autosave and native .vmagic project files.
 - [x] Persistent render history with reusable settings.
 - [x] Warm local AI worker across preview/render requests.
+- [x] American/British English narration voices alongside Mandarin.
+- [x] Automatic local video scene analysis on import.
+- [x] Natural-language edit planning from timestamped scene descriptions.
+- [x] Real FFmpeg/NVENC source cutting from the local AI edit plan.
+- [x] SmolVLM2 500M Fast mode verified on RTX 2080 SUPER CUDA.
+- [x] 8GB-class GPU Auto policy defaults to Fast; 2.2B remains an explicit Quality option.
+- [x] Runtime schema v2 upgrades older local runtimes in place.
+- [ ] Evaluate a quantized 4B-class quality model for stronger semantic editing on supported GPUs.
 - [x] Source-audio waveform visualization behind the narration timeline.
 - [x] Left/right resize handles directly on narration blocks.
 - [ ] Per-segment cached regeneration without re-synthesizing unchanged segments.

@@ -277,3 +277,163 @@ def mix_voiceover(
         "videoEncoder": video_args[1] if len(video_args) > 1 else None,
         "ffmpegTail": completed.stderr.splitlines()[-12:],
     }
+
+
+def scene_windows(
+    duration_seconds: float,
+    target_chunk_seconds: float = 6.0,
+    max_scenes: int = 24,
+) -> list[dict[str, float | str]]:
+    duration = max(float(duration_seconds), 0.0)
+    if duration <= 0:
+        return []
+
+    target = max(2.5, min(float(target_chunk_seconds), 12.0))
+    estimated = max(1, int(np.ceil(duration / target)))
+    count = min(max_scenes, estimated)
+    chunk = duration / count
+
+    scenes: list[dict[str, float | str]] = []
+    for index in range(count):
+        start = chunk * index
+        end = duration if index == count - 1 else chunk * (index + 1)
+        scenes.append(
+            {
+                "id": f"scene-{index + 1:03d}",
+                "start": round(start, 3),
+                "end": round(end, 3),
+            }
+        )
+    return scenes
+
+
+def extract_analysis_clip(
+    video_path: str | Path,
+    start: float,
+    end: float,
+    output_path: str | Path,
+) -> str:
+    ffmpeg = _media_tool("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg was not found.")
+
+    if end <= start:
+        raise ValueError("Analysis clip end must be after start.")
+
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        ffmpeg,
+        "-y",
+        "-ss",
+        f"{start:.3f}",
+        "-t",
+        f"{end - start:.3f}",
+        "-i",
+        str(Path(video_path)),
+        "-an",
+        "-vf",
+        "fps=2,scale=640:-2:force_original_aspect_ratio=decrease",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "ultrafast",
+        "-crf",
+        "28",
+        "-pix_fmt",
+        "yuv420p",
+        str(output),
+    ]
+    _run(command)
+    return str(output)
+
+
+def render_edit_plan(
+    video_path: str | Path,
+    segments: list[dict[str, Any]],
+    output_path: str | Path,
+) -> dict[str, Any]:
+    ffmpeg = _media_tool("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg was not found.")
+    if not segments:
+        raise ValueError("Edit plan has no segments.")
+
+    video = Path(video_path)
+    output = Path(output_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    info = probe_video(video)
+    duration = float(info["durationSeconds"])
+    has_audio = bool(info["hasAudio"])
+
+    normalized: list[dict[str, Any]] = []
+    for index, segment in enumerate(segments):
+        start = max(0.0, float(segment["start"]))
+        end = min(duration, float(segment["end"]))
+        if end <= start:
+            raise ValueError(f"Edit segment {index + 1} has invalid timing.")
+        normalized.append(
+            {
+                **segment,
+                "start": start,
+                "end": end,
+            }
+        )
+
+    filters: list[str] = []
+    concat_inputs: list[str] = []
+    for index, segment in enumerate(normalized):
+        start = segment["start"]
+        end = segment["end"]
+        filters.append(
+            f"[0:v]trim=start={start:.3f}:end={end:.3f},"
+            f"setpts=PTS-STARTPTS[v{index}]"
+        )
+        concat_inputs.append(f"[v{index}]")
+        if has_audio:
+            filters.append(
+                f"[0:a]atrim=start={start:.3f}:end={end:.3f},"
+                f"asetpts=PTS-STARTPTS[a{index}]"
+            )
+            concat_inputs.append(f"[a{index}]")
+
+    if has_audio:
+        filters.append(
+            "".join(concat_inputs)
+            + f"concat=n={len(normalized)}:v=1:a=1[vout][aout]"
+        )
+    else:
+        filters.append(
+            "".join(concat_inputs)
+            + f"concat=n={len(normalized)}:v=1:a=0[vout]"
+        )
+
+    video_args = _video_encoder_args(ffmpeg, True)
+    command = [
+        ffmpeg,
+        "-y",
+        "-i",
+        str(video),
+        "-filter_complex",
+        ";".join(filters),
+        "-map",
+        "[vout]",
+    ]
+    if has_audio:
+        command.extend(["-map", "[aout]"])
+
+    command.extend(video_args)
+    if has_audio:
+        command.extend(["-c:a", "aac", "-b:a", "192k"])
+    command.extend(["-movflags", "+faststart", str(output)])
+
+    completed = _run(command)
+    return {
+        "path": str(output),
+        "segments": normalized,
+        "segmentCount": len(normalized),
+        "durationSeconds": sum(item["end"] - item["start"] for item in normalized),
+        "hasAudio": has_audio,
+        "videoEncoder": video_args[1] if len(video_args) > 1 else None,
+        "ffmpegTail": completed.stderr.splitlines()[-12:],
+    }

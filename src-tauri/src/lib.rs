@@ -12,6 +12,8 @@ use std::sync::{
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager, State};
 
+const REQUIRED_RUNTIME_SCHEMA: u64 = 2;
+
 #[derive(Clone, Default)]
 struct RenderTaskState {
     pid: Arc<Mutex<Option<u32>>>,
@@ -375,7 +377,9 @@ fn configured_engine_command(
 
     if let Some(mode) = device_mode {
         if matches!(mode, "cpu" | "cuda") {
-            command.env("VIDEOMAGIC_TTS_DEVICE", mode);
+            command
+                .env("VIDEOMAGIC_TTS_DEVICE", mode)
+                .env("VIDEOMAGIC_VISION_DEVICE", mode);
         }
     }
 
@@ -679,6 +683,9 @@ fn runtime_status_impl(app: &AppHandle) -> Result<Value, String> {
             "portableReady": false,
             "developmentReady": false,
             "configured": false,
+            "needsUpdate": false,
+            "schemaVersion": 0,
+            "requiredSchemaVersion": REQUIRED_RUNTIME_SCHEMA,
             "dataDir": Value::Null,
             "message": "Choose a data folder to install the local AI runtime."
         }));
@@ -687,7 +694,20 @@ fn runtime_status_impl(app: &AppHandle) -> Result<Value, String> {
     let portable = portable_python(&home);
     let ffmpeg = local_ffmpeg(&home);
     let status_file = home.join("runtime").join("status.json");
-    let portable_ready = portable.exists() && ffmpeg.exists() && status_file.exists();
+    let installed_schema = if status_file.exists() {
+        fs::read_to_string(&status_file)
+            .ok()
+            .and_then(|content| serde_json::from_str::<Value>(&content).ok())
+            .and_then(|value| value.get("schemaVersion").and_then(Value::as_u64))
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    let schema_current = installed_schema >= REQUIRED_RUNTIME_SCHEMA;
+    let needs_update =
+        portable.exists() && ffmpeg.exists() && status_file.exists() && !schema_current;
+    let portable_ready =
+        portable.exists() && ffmpeg.exists() && status_file.exists() && schema_current;
 
     #[cfg(debug_assertions)]
     let development_ready = development_python()?.exists() && command_available("ffmpeg");
@@ -700,11 +720,16 @@ fn runtime_status_impl(app: &AppHandle) -> Result<Value, String> {
         "portableReady": portable_ready,
         "developmentReady": development_ready,
         "configured": true,
+        "needsUpdate": needs_update,
+        "schemaVersion": installed_schema,
+        "requiredSchemaVersion": REQUIRED_RUNTIME_SCHEMA,
         "dataDir": home,
         "python": if portable.exists() { Some(portable) } else { None },
         "ffmpeg": if ffmpeg.exists() { Some(ffmpeg) } else { None },
         "message": if portable_ready {
             "Local AI runtime ready."
+        } else if needs_update {
+            "Local AI runtime update required."
         } else if development_ready {
             "Development runtime ready."
         } else {
@@ -871,6 +896,7 @@ fn emit_runtime_progress(app: &AppHandle, line: &str) {
                 "uv" => 0.08,
                 "python" => 0.18,
                 "torch" => 0.38,
+                "vision" => 0.48,
                 "engine" => 0.64,
                 "ffmpeg" => 0.84,
                 "verify" => 0.95,
@@ -1074,6 +1100,122 @@ async fn video_waveform(
 }
 
 #[tauri::command]
+async fn analyze_video(
+    app: AppHandle,
+    state: State<'_, EngineWorkerState>,
+    video_path: String,
+    vision_mode: String,
+    device_mode: String,
+) -> Result<Value, String> {
+    let engine_state = state.inner().clone();
+    let app_for_worker = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let local = configured_runtime_home(&app_for_worker)?
+            .ok_or_else(|| "Local AI runtime is not configured.".to_string())?;
+        run_persistent_engine_request(
+            Some(&app_for_worker),
+            &engine_state,
+            None,
+            &local,
+            json!({
+                "id": "desktop-analyze-video",
+                "method": "analyze_video",
+                "params": {
+                    "videoPath": video_path,
+                    "visionMode": vision_mode
+                }
+            }),
+            device_mode.as_str(),
+            Some("videomagic://analysis-progress"),
+        )
+    })
+    .await
+    .map_err(|error| format!("Video analysis task failed: {error}"))?
+}
+
+#[tauri::command]
+async fn plan_ai_edit(
+    app: AppHandle,
+    state: State<'_, EngineWorkerState>,
+    scenes: Value,
+    instruction: String,
+    vision_mode: String,
+    device_mode: String,
+) -> Result<Value, String> {
+    let engine_state = state.inner().clone();
+    let app_for_worker = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let local = configured_runtime_home(&app_for_worker)?
+            .ok_or_else(|| "Local AI runtime is not configured.".to_string())?;
+        run_persistent_engine_request(
+            Some(&app_for_worker),
+            &engine_state,
+            None,
+            &local,
+            json!({
+                "id": "desktop-plan-ai-edit",
+                "method": "plan_edit",
+                "params": {
+                    "scenes": scenes,
+                    "instruction": instruction,
+                    "visionMode": vision_mode
+                }
+            }),
+            device_mode.as_str(),
+            Some("videomagic://ai-edit-progress"),
+        )
+    })
+    .await
+    .map_err(|error| format!("AI edit planning failed: {error}"))?
+}
+
+#[tauri::command]
+async fn render_ai_edit(
+    app: AppHandle,
+    task: State<'_, RenderTaskState>,
+    engine: State<'_, EngineWorkerState>,
+    video_path: String,
+    scenes: Option<Value>,
+    instruction: String,
+    vision_mode: String,
+    device_mode: String,
+    output_dir: Option<String>,
+) -> Result<Value, String> {
+    let task_state = task.inner().clone();
+    let engine_state = engine.inner().clone();
+    let app_for_worker = app.clone();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        let local = configured_runtime_home(&app_for_worker)?
+            .ok_or_else(|| "Local AI runtime is not configured. Run setup first.".to_string())?;
+        ensure_runtime_dirs(&local)?;
+        let output_path = make_output_path(&local, &video_path, output_dir)?;
+
+        run_persistent_engine_request(
+            Some(&app_for_worker),
+            &engine_state,
+            Some(&task_state),
+            &local,
+            json!({
+                "id": "desktop-ai-edit",
+                "method": "ai_edit",
+                "params": {
+                    "videoPath": video_path,
+                    "scenes": scenes,
+                    "instruction": instruction,
+                    "visionMode": vision_mode,
+                    "outputPath": output_path
+                }
+            }),
+            device_mode.as_str(),
+            Some("videomagic://ai-edit-progress"),
+        )
+    })
+    .await
+    .map_err(|error| format!("AI edit task failed: {error}"))?
+}
+
+#[tauri::command]
 async fn plan_narration_timeline(
     app: AppHandle,
     state: State<'_, EngineWorkerState>,
@@ -1122,7 +1264,11 @@ async fn preview_voice(
         let preview_text = {
             let clean = text.trim();
             if clean.is_empty() {
-                "你好，这里是 VideoMagic。本地 AI 配音已经准备好了。".to_string()
+                if voice.starts_with('a') || voice.starts_with('b') {
+                    "Hi, this is VideoMagic. Your local AI voice is ready.".to_string()
+                } else {
+                    "你好，这里是 VideoMagic。本地 AI 配音已经准备好了。".to_string()
+                }
             } else {
                 clean.chars().take(88).collect::<String>()
             }
@@ -1361,6 +1507,9 @@ pub fn run() {
             allow_preview_file,
             probe_video_info,
             video_waveform,
+            analyze_video,
+            plan_ai_edit,
+            render_ai_edit,
             plan_narration_timeline,
             preview_voice,
             render_video,

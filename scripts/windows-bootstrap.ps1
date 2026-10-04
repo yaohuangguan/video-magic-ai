@@ -101,9 +101,24 @@ if ($torchReady.Trim() -ne "1") {
     }
 
     Write-Step "torch" ("Installing PyTorch from " + $torchIndex)
-    & $pythonExe -m pip install torch --index-url $torchIndex
+    & $pythonExe -m pip install torch torchvision --index-url $torchIndex
     if ($LASTEXITCODE -ne 0) {
-        throw "PyTorch installation failed"
+        throw "PyTorch / torchvision installation failed"
+    }
+} else {
+    $visionTorchReady = & $pythonExe -c "import importlib.util; print('1' if importlib.util.find_spec('torchvision') else '0')"
+    if ($visionTorchReady.Trim() -ne "1") {
+        $hasNvidia = $null -ne (Get-Command "nvidia-smi.exe" -ErrorAction SilentlyContinue)
+        $torchIndex = if ($hasNvidia) {
+            "https://download.pytorch.org/whl/cu128"
+        } else {
+            "https://download.pytorch.org/whl/cpu"
+        }
+        Write-Step "vision" "Installing torchvision for local video understanding"
+        & $pythonExe -m pip install torchvision --index-url $torchIndex
+        if ($LASTEXITCODE -ne 0) {
+            throw "torchvision installation failed"
+        }
     }
 }
 
@@ -137,13 +152,15 @@ $env:PATH = $ffmpegBin + ";" + $env:PATH
 $env:VIDEOMAGIC_HOME = $DataDir
 
 Write-Step "verify" "Checking local runtime"
-$verify = & $pythonExe -c "import json, importlib.util, torch; print(json.dumps({'torch': torch.__version__, 'cuda': bool(torch.cuda.is_available()), 'gpu': torch.cuda.get_device_name(0) if torch.cuda.is_available() else None, 'kokoro': bool(importlib.util.find_spec('kokoro')), 'misaki': bool(importlib.util.find_spec('misaki'))}))"
+$verify = & $pythonExe -c "import json, importlib.util, torch; print(json.dumps({'torch': torch.__version__, 'cuda': bool(torch.cuda.is_available()), 'gpu': torch.cuda.get_device_name(0) if torch.cuda.is_available() else None, 'kokoro': bool(importlib.util.find_spec('kokoro')), 'misaki': bool(importlib.util.find_spec('misaki')), 'transformers': bool(importlib.util.find_spec('transformers')), 'torchvision': bool(importlib.util.find_spec('torchvision')), 'av': bool(importlib.util.find_spec('av'))}))"
 if ($LASTEXITCODE -ne 0) {
     throw "Runtime verification failed"
 }
 
 $status = [ordered]@{
     ready = $true
+    schemaVersion = 2
+    engineVersion = "0.2.0"
     python = $pythonExe
     ffmpeg = $ffmpegExe
     ffprobe = $ffprobeExe
