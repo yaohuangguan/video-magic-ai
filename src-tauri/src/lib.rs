@@ -12,7 +12,7 @@ use std::sync::{
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager, State};
 
-const REQUIRED_RUNTIME_SCHEMA: u64 = 2;
+const REQUIRED_RUNTIME_SCHEMA: u64 = 3;
 
 #[derive(Clone, Default)]
 struct RenderTaskState {
@@ -232,10 +232,9 @@ fn default_runtime_home(app: &AppHandle) -> Result<PathBuf, String> {
 
 
 fn configured_runtime_home(app: &AppHandle) -> Result<Option<PathBuf>, String> {
-    if let Some(path) = env::var_os("VIDEOMAGIC_HOME") {
-        return Ok(Some(PathBuf::from(path)));
-    }
-
+    // A persisted user choice must win over inherited development shell variables.
+    // Otherwise a dev launcher can accidentally shadow a fully configured runtime
+    // with a stale project-local VIDEOMAGIC_HOME.
     let config = runtime_config_path(app)?;
     if config.exists() {
         let value = fs::read_to_string(&config)
@@ -244,6 +243,10 @@ fn configured_runtime_home(app: &AppHandle) -> Result<Option<PathBuf>, String> {
         if !trimmed.is_empty() {
             return Ok(Some(PathBuf::from(trimmed)));
         }
+    }
+
+    if let Some(path) = env::var_os("VIDEOMAGIC_HOME") {
+        return Ok(Some(PathBuf::from(path)));
     }
 
     #[cfg(debug_assertions)]

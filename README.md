@@ -86,9 +86,11 @@ Verified on the Windows development PC:
 - persistent warm Kokoro worker across preview/render requests;
 - American English narration (`am_michael`) generated successfully on CUDA;
 - SmolVLM2-500M video understanding generated real scene descriptions on CUDA;
-- natural-language AI Edit selected a real scene ID and rendered a new MP4 with FFmpeg/NVENC;
-- Auto video-model selection stays on the verified 500M Fast model at ~6.95GB free VRAM;
-- runtime schema v2 detects and repairs older local runtimes before enabling the new AI-edit features.
+- natural-language AI Edit selected real scene IDs and rendered a new MP4 with FFmpeg/NVENC;
+- a real 65-second source was reduced to a 15.301-second highlight from a Chinese natural-language instruction;
+- edit duration budgets are enforced deterministically and under-selected plans are supplemented with high-motion scenes;
+- Auto video-model selection stays on the verified 500M Fast model on the RTX 2080 SUPER / 8GB-class GPU;
+- runtime schema v3 detects and repairs older local runtimes before enabling video-model dependencies.
 
 A real 12-second end-to-end narration render and a separate natural-language AI Edit have both been completed from the local runtime without cloud inference. A custom two-segment timeline was also rendered successfully with narration starting at 1.0s and 7.0s; waveform checks confirmed silence outside the edited narration windows. On the RTX 2080 SUPER, repeated TTS on a warm worker measured about 0.18s after a roughly 14.4s cold start in the test case.
 
@@ -127,7 +129,7 @@ videomagic/
 ├── src/                       React UI
 ├── src-tauri/                 Tauri / Rust desktop bridge
 ├── engine/                    Local Python AI/media engine
-├── site/                      GitHub Pages product website
+├── site/                      Cloudflare Pages product website
 ├── scripts/                   Runtime bootstrap scripts
 ├── docs/
 │   ├── engine-protocol.md
