@@ -156,18 +156,21 @@ The product website source lives in `site/` and is published at [videomagic.page
 
 ## First-run runtime bootstrap
 
-The NSIS installer stays small and ships the desktop shell, bootstrap script, and VideoMagic Python engine source. On first setup, the user chooses a parent folder for heavy AI data.
+The NSIS installer stays small and ships the desktop shell, bootstrap script, and VideoMagic Python engine source. There are no manual Python, Rust, FFmpeg or model prerequisites for end users.
 
-VideoMagic then installs into that data directory:
+On the first launch, VideoMagic automatically chooses a private per-user local data directory and prepares the AI runtime there. The user only needs an internet connection for the initial runtime/model downloads. Advanced users can change the runtime location later from Settings.
+
+VideoMagic installs into that data directory:
 
 - uv and a managed Python 3.11 runtime;
 - a dedicated Python venv;
 - CUDA PyTorch when NVIDIA is available, otherwise the CPU wheel;
-- Kokoro / Misaki and the VideoMagic engine;
+- Kokoro / Misaki, Transformers / PyAV and the VideoMagic engine;
 - FFmpeg / FFprobe;
-- Hugging Face, Torch, pip, Python and temporary caches.
+- Hugging Face, Torch, pip, Python and temporary caches;
+- voice and video-model weights automatically on first use.
 
-The bootstrap has been verified end to end on Windows and the installed NSIS resources have been used successfully. The desktop UI can rerun setup against the existing data directory as a repair operation. The remaining release check is a true clean-machine/VM test, code signing, and updater hardening.
+The bootstrap is designed to be idempotent: interrupted or outdated runtimes can be repaired in place without reinstalling the desktop app. Current public distribution is still unsigned, so Windows SmartScreen may warn on launch.
 
 ## Product principles
 
