@@ -20,6 +20,7 @@ type SceneIndexItem = {
   start: number;
   end: number;
   description: string;
+  motionScore?: number;
 };
 
 type VideoAnalysisResult = {
@@ -352,6 +353,7 @@ function App() {
   const timelineTrackRef = useRef<HTMLDivElement | null>(null);
   const projectHydrated = useRef(false);
   const videoPathRef = useRef("");
+  const autoRuntimeAttemptRef = useRef("");
   const runtimeRepairAttempted = useRef(false);
   const runtimeFirstRunAttempted = useRef(false);
 
@@ -535,6 +537,21 @@ function App() {
   useEffect(() => {
     videoPathRef.current = videoPath;
   }, [videoPath]);
+
+  useEffect(() => {
+    if (
+      !videoPath ||
+      !runtime ||
+      runtime.ready ||
+      isBootstrapping ||
+      autoRuntimeAttemptRef.current === videoPath
+    ) {
+      return;
+    }
+
+    autoRuntimeAttemptRef.current = videoPath;
+    void setupRuntime(true);
+  }, [videoPath, runtime?.ready, runtime?.dataDir, isBootstrapping]);
 
   useEffect(() => {
     try {
@@ -781,6 +798,8 @@ function App() {
   }
 
   function selectVideoPath(path: string) {
+    void invoke<boolean>("cancel_render").catch(() => {});
+    autoRuntimeAttemptRef.current = "";
     setVideoPath(path);
     setWaveform([]);
     setWaveformLoading(false);
@@ -1148,7 +1167,7 @@ function App() {
   }
 
   async function cancelRender() {
-    setStatus("Cancelling render…");
+    setStatus("Cancelling local task…");
     try {
       await invoke<boolean>("cancel_render");
       setEngineWarm(false);
@@ -1471,6 +1490,7 @@ function App() {
     previewAudio.current?.pause();
     setIsPreviewing(false);
     setProjectFilePath("");
+    autoRuntimeAttemptRef.current = "";
     setVideoPath("");
     setVideoInfo(null);
     setWaveform([]);
@@ -1802,15 +1822,28 @@ function App() {
                   </span>
                 </div>
               </div>
-              {videoPath && runtime?.ready && !isAnalyzing && (
-                <button
-                  className="text-button"
-                  type="button"
-                  disabled={isAiEditing}
-                  onClick={() => void analyzeSourceVideo(videoPath)}
-                >
-                  Re-analyze
-                </button>
+              {videoPath && runtime?.ready && (
+                isAnalyzing ? (
+                  <button
+                    className="text-button danger"
+                    type="button"
+                    onClick={() => {
+                      void cancelRender();
+                      setAnalysisMessage("Analysis cancelled");
+                    }}
+                  >
+                    Cancel
+                  </button>
+                ) : (
+                  <button
+                    className="text-button"
+                    type="button"
+                    disabled={isAiEditing}
+                    onClick={() => void analyzeSourceVideo(videoPath)}
+                  >
+                    Re-analyze
+                  </button>
+                )
               )}
             </div>
 

@@ -12,7 +12,7 @@ use std::sync::{
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager, State};
 
-const REQUIRED_RUNTIME_SCHEMA: u64 = 2;
+const REQUIRED_RUNTIME_SCHEMA: u64 = 3;
 
 #[derive(Clone, Default)]
 struct RenderTaskState {
@@ -232,10 +232,9 @@ fn default_runtime_home(app: &AppHandle) -> Result<PathBuf, String> {
 
 
 fn configured_runtime_home(app: &AppHandle) -> Result<Option<PathBuf>, String> {
-    if let Some(path) = env::var_os("VIDEOMAGIC_HOME") {
-        return Ok(Some(PathBuf::from(path)));
-    }
-
+    // A persisted user choice must win over inherited development shell variables.
+    // Otherwise a dev launcher can accidentally shadow a fully configured runtime
+    // with a stale project-local VIDEOMAGIC_HOME.
     let config = runtime_config_path(app)?;
     if config.exists() {
         let value = fs::read_to_string(&config)
@@ -244,6 +243,10 @@ fn configured_runtime_home(app: &AppHandle) -> Result<Option<PathBuf>, String> {
         if !trimmed.is_empty() {
             return Ok(Some(PathBuf::from(trimmed)));
         }
+    }
+
+    if let Some(path) = env::var_os("VIDEOMAGIC_HOME") {
+        return Ok(Some(PathBuf::from(path)));
     }
 
     #[cfg(debug_assertions)]
@@ -358,6 +361,46 @@ fn ensure_runtime_dirs(local: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn runtime_engine_dir(local: &Path) -> Option<PathBuf> {
+    let status_file = local.join("runtime").join("status.json");
+    if let Ok(content) = fs::read_to_string(&status_file) {
+        let content = content.trim_start_matches('\u{feff}');
+        if let Ok(status) = serde_json::from_str::<Value>(content) {
+            if let Some(path) = status
+                .get("engineDir")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+            {
+                let candidate = PathBuf::from(path);
+                if candidate.join("videomagic_engine").is_dir() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+
+    if let Ok(exe) = env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let candidate = parent.join("engine");
+            if candidate.join("videomagic_engine").is_dir() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    {
+        if let Ok(root) = dev_project_root() {
+            let candidate = root.join("engine");
+            if candidate.join("videomagic_engine").is_dir() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
+}
+
 fn configured_engine_command(
     python: &Path,
     local: &Path,
@@ -383,6 +426,17 @@ fn configured_engine_command(
         .env("TEMP", local.join("tmp"))
         .env("TMPDIR", local.join("tmp"))
         .env("PATH", path_env);
+
+    if let Some(engine_dir) = runtime_engine_dir(local) {
+        let mut python_paths = vec![engine_dir.clone()];
+        if let Some(existing) = env::var_os("PYTHONPATH") {
+            python_paths.extend(env::split_paths(&existing));
+        }
+        if let Ok(python_path) = env::join_paths(python_paths) {
+            command.env("PYTHONPATH", python_path);
+        }
+        command.current_dir(&engine_dir);
+    }
 
     if let Some(mode) = device_mode {
         if matches!(mode, "cpu" | "cuda") {
@@ -717,10 +771,16 @@ fn runtime_status_impl(app: &AppHandle) -> Result<Value, String> {
         0
     };
     let schema_current = installed_schema >= REQUIRED_RUNTIME_SCHEMA;
-    let needs_update =
-        portable.exists() && ffmpeg.exists() && status_file.exists() && !schema_current;
-    let portable_ready =
-        portable.exists() && ffmpeg.exists() && status_file.exists() && schema_current;
+    let engine_ready = runtime_engine_dir(&home).is_some();
+    let needs_update = portable.exists()
+        && ffmpeg.exists()
+        && status_file.exists()
+        && (!schema_current || !engine_ready);
+    let portable_ready = portable.exists()
+        && ffmpeg.exists()
+        && status_file.exists()
+        && schema_current
+        && engine_ready;
 
     #[cfg(debug_assertions)]
     let development_ready = development_python()?.exists() && command_available("ffmpeg");
@@ -1115,11 +1175,13 @@ async fn video_waveform(
 #[tauri::command]
 async fn analyze_video(
     app: AppHandle,
+    task: State<'_, RenderTaskState>,
     state: State<'_, EngineWorkerState>,
     video_path: String,
     vision_mode: String,
     device_mode: String,
 ) -> Result<Value, String> {
+    let task_state = task.inner().clone();
     let engine_state = state.inner().clone();
     let app_for_worker = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -1128,7 +1190,7 @@ async fn analyze_video(
         run_persistent_engine_request(
             Some(&app_for_worker),
             &engine_state,
-            None,
+            Some(&task_state),
             &local,
             json!({
                 "id": "desktop-analyze-video",

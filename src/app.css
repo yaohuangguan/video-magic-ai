@@ -7,7 +7,14 @@
   -webkit-font-smoothing: antialiased;
 }
 * { box-sizing: border-box; }
-html, body, #root { margin: 0; min-width: 1020px; min-height: 100vh; }
+html, body, #root {
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  min-width: 0;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
 body {
   background:
     radial-gradient(circle at 18% 0%, rgba(255,255,255,.9), transparent 32rem),
@@ -489,9 +496,16 @@ input[type="range"] { width: 100%; margin: 9px 0 0; accent-color: #1e1e1e; }
 }
 .export-specs strong { color: #282828; font-size: 11px; }
 @media (max-width: 1120px) {
-  html, body, #root { min-width: 900px; }
-  .studio-grid { grid-template-columns: minmax(0, 1fr) 340px; }
+  .studio-grid { grid-template-columns: minmax(0, 1fr) 330px; }
   .project-header, .studio-grid { padding-left: 22px; padding-right: 22px; }
+}
+
+@media (max-width: 960px) {
+  .topbar { padding-left: 18px; padding-right: 18px; }
+  .topbar-actions { gap: 6px; }
+  .studio-grid { grid-template-columns: minmax(0, 1fr); }
+  .inspector-column { position: static; }
+  .privacy-note { display: none; }
 }
 
 

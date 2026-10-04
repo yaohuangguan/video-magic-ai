@@ -281,7 +281,7 @@ def mix_voiceover(
 
 def scene_windows(
     duration_seconds: float,
-    target_chunk_seconds: float = 6.0,
+    target_chunk_seconds: float = 4.0,
     max_scenes: int = 24,
 ) -> list[dict[str, float | str]]:
     duration = max(float(duration_seconds), 0.0)
@@ -346,6 +346,41 @@ def extract_analysis_clip(
     ]
     _run(command)
     return str(output)
+
+
+def clip_motion_score(video_path: str | Path) -> float:
+    ffmpeg = _media_tool("ffmpeg")
+    if not ffmpeg:
+        raise RuntimeError("ffmpeg was not found.")
+
+    completed = subprocess.run(
+        [
+            ffmpeg,
+            "-v",
+            "error",
+            "-i",
+            str(Path(video_path)),
+            "-an",
+            "-vf",
+            "fps=4,scale=160:90,format=gray",
+            "-f",
+            "rawvideo",
+            "pipe:1",
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    frame_size = 160 * 90
+    if len(completed.stdout) < frame_size * 2:
+        return 0.0
+
+    frames = np.frombuffer(completed.stdout, dtype=np.uint8)
+    frame_count = frames.size // frame_size
+    frames = frames[: frame_count * frame_size].reshape(frame_count, frame_size).astype(np.float32)
+
+    differences = np.abs(np.diff(frames, axis=0))
+    return round(float(np.mean(differences) / 255.0), 6)
 
 
 def render_edit_plan(
