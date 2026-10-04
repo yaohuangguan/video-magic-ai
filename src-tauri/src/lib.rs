@@ -707,7 +707,10 @@ fn runtime_status_impl(app: &AppHandle) -> Result<Value, String> {
     let installed_schema = if status_file.exists() {
         fs::read_to_string(&status_file)
             .ok()
-            .and_then(|content| serde_json::from_str::<Value>(&content).ok())
+            .and_then(|content| {
+                let content = content.trim_start_matches('\u{feff}');
+                serde_json::from_str::<Value>(content).ok()
+            })
             .and_then(|value| value.get("schemaVersion").and_then(Value::as_u64))
             .unwrap_or(0)
     } else {
