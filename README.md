@@ -15,9 +15,11 @@ Current working flow:
 
 1. Import a local video.
 2. Paste a Mandarin commentary script.
-3. Pick a local voice preset.
-4. Generate speech locally with Kokoro.
-5. Split Mandarin scripts into sentence-level narration segments and fit them to the clip duration.
+3. Pick a local Mandarin or English voice preset.
+4. Generate speech locally with Kokoro on CUDA or CPU.
+5. Optionally let the local open-source video model analyze the source automatically, then describe the edit you want in plain language.
+6. Render a real AI-selected cut with FFmpeg/NVENC, or continue into the narration workflow.
+7. Split Mandarin or English scripts into sentence-level narration segments and fit them to the clip duration.
 6. Optionally switch to the visual creator timeline and drag narration segments to exact positions.
 7. Preview the local source video and seek it directly from the narration timeline.
 8. Generate synchronized subtitles from the same narration timeline.
@@ -26,7 +28,7 @@ Current working flow:
 11. Stream render progress to the desktop UI and allow cancellation.
 12. Export a finished H.264/AAC MP4 to a user-selected folder.
 
-The source video never needs to be uploaded for the core workflow. Voice presets can be previewed before rendering.
+The source video never needs to be uploaded for the core workflow. Voice presets can be previewed before rendering. Local AI edit uses SmolVLM2 video understanding today: a 500M fast model for low-VRAM analysis and a 2.2B quality model when more GPU memory is available.
 
 The desktop workspace also supports drag-and-drop import, secure local video preview, a persistent sentence-level creator timeline, autosave/restore, native `.vmagic` project files, explicit Open/Save/Save As, recent-project recall, persistent render history, reusable creator presets, custom export folders, desktop keyboard shortcuts, selectable Auto/GPU/CPU inference, and a warm local AI worker for fast repeated previews/renders.
 

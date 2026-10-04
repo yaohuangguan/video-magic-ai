@@ -10,6 +10,43 @@ type VoicePreset = {
   name: string;
   description: string;
   tag: string;
+  language: "中文" | "English";
+};
+
+type VisionMode = "auto" | "quality" | "fast";
+
+type SceneIndexItem = {
+  id: string;
+  start: number;
+  end: number;
+  description: string;
+};
+
+type VideoAnalysisResult = {
+  videoPath: string;
+  durationSeconds: number;
+  scenes: SceneIndexItem[];
+  sceneCount: number;
+  model?: string | null;
+  device?: string | null;
+  visionMode: string;
+};
+
+type AiEditResult = {
+  analysis?: VideoAnalysisResult | null;
+  plan: {
+    sceneIds: string[];
+    segments: Array<SceneIndexItem & { sceneId?: string }>;
+    summary?: string;
+    title?: string;
+    model?: string;
+    device?: string;
+  };
+  video: {
+    path: string;
+    durationSeconds?: number;
+    segmentCount?: number;
+  };
 };
 
 type InferenceMode = "auto" | "cuda" | "cpu";
@@ -122,6 +159,7 @@ type RuntimeDiagnostics = {
     ffmpeg?: string | null;
     ffprobe?: string | null;
     kokoroInstalled?: boolean;
+    visionInstalled?: boolean;
     videomagicHome?: string | null;
     error?: string;
     gpu?: {
@@ -166,6 +204,10 @@ type SavedProject = {
   deviceMode: InferenceMode;
   timeline?: TimelineSegment[];
   videoDuration?: number;
+  visionMode?: VisionMode;
+  sceneIndex?: SceneIndexItem[];
+  analysisVideoPath?: string;
+  editInstruction?: string;
 };
 
 const PROJECT_STORAGE_KEY = "videomagic.project.v1";
@@ -202,13 +244,27 @@ const builtinPresets: CreatorPreset[] = [
     autoTiming: true,
     subtitles: true,
   },
+  {
+    id: "english-story",
+    name: "English storytelling",
+    voice: "am_michael",
+    speed: 1.0,
+    originalVolume: 40,
+    ducking: true,
+    autoTiming: true,
+    subtitles: true,
+  },
 ];
 
 const voices: VoicePreset[] = [
-  { id: "zm_009", name: "Punchy Male", description: "Sharper pacing for commentary and short-form clips.", tag: "Fast" },
-  { id: "zm_010", name: "Story Male", description: "Natural Mandarin narration with a balanced tone.", tag: "Story" },
-  { id: "zm_011", name: "Deep Male", description: "Steadier voice for explainers and documentary content.", tag: "Deep" },
-  { id: "zf_001", name: "Bright Female", description: "Clear, lighter delivery for lifestyle and social clips.", tag: "Bright" },
+  { id: "zm_009", name: "Punchy Male", description: "Sharper Mandarin pacing for commentary and short clips.", tag: "Fast", language: "中文" },
+  { id: "zm_010", name: "Story Male", description: "Natural Mandarin narration with a balanced tone.", tag: "Story", language: "中文" },
+  { id: "zm_011", name: "Deep Male", description: "Steadier Mandarin voice for explainers and documentary content.", tag: "Deep", language: "中文" },
+  { id: "zf_001", name: "Bright Female", description: "Clear Mandarin delivery for lifestyle and social clips.", tag: "Bright", language: "中文" },
+  { id: "af_heart", name: "Heart", description: "Warm American English female narration.", tag: "US", language: "English" },
+  { id: "af_bella", name: "Bella", description: "Expressive American English female voice.", tag: "US", language: "English" },
+  { id: "am_michael", name: "Michael", description: "Balanced American English male narration.", tag: "US", language: "English" },
+  { id: "bm_george", name: "George", description: "Natural British English male narration.", tag: "UK", language: "English" },
 ];
 
 function fileName(path: string) {
@@ -252,6 +308,16 @@ function App() {
   const [outputDir, setOutputDir] = useState("");
   const [outputPath, setOutputPath] = useState("");
   const [runtime, setRuntime] = useState<RuntimeStatus | null>(null);
+  const [visionMode, setVisionMode] = useState<VisionMode>("auto");
+  const [sceneIndex, setSceneIndex] = useState<SceneIndexItem[]>([]);
+  const [analysisVideoPath, setAnalysisVideoPath] = useState("");
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisProgress, setAnalysisProgress] = useState(0);
+  const [analysisMessage, setAnalysisMessage] = useState("");
+  const [editInstruction, setEditInstruction] = useState("");
+  const [isAiEditing, setIsAiEditing] = useState(false);
+  const [aiEditProgress, setAiEditProgress] = useState(0);
+  const [aiEditResult, setAiEditResult] = useState<AiEditResult | null>(null);
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [isBootstrapping, setIsBootstrapping] = useState(false);
@@ -282,12 +348,14 @@ function App() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const timelineTrackRef = useRef<HTMLDivElement | null>(null);
   const projectHydrated = useRef(false);
+  const videoPathRef = useRef("");
 
   const canGenerate = Boolean(
     runtime?.ready &&
       videoPath &&
       script.trim().length > 0 &&
       !isGenerating &&
+      !isAiEditing &&
       !isBootstrapping,
   );
 
@@ -387,6 +455,25 @@ function App() {
       else cleanups.push(unlisten);
     });
 
+    void listen<TaskProgress>("videomagic://analysis-progress", (event) => {
+      if (disposed) return;
+      setAnalysisProgress(event.payload.progress);
+      setAnalysisMessage(event.payload.message);
+      setStatus(event.payload.message);
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else cleanups.push(unlisten);
+    });
+
+    void listen<TaskProgress>("videomagic://ai-edit-progress", (event) => {
+      if (disposed) return;
+      setAiEditProgress(event.payload.progress);
+      setStatus(event.payload.message);
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else cleanups.push(unlisten);
+    });
+
     void listen<TaskProgress>("videomagic://runtime-progress", (event) => {
       if (disposed) return;
       setRuntimeProgress(event.payload.progress);
@@ -409,6 +496,10 @@ function App() {
   }, [deviceMode]);
 
   useEffect(() => {
+    videoPathRef.current = videoPath;
+  }, [videoPath]);
+
+  useEffect(() => {
     try {
       const raw = localStorage.getItem(PROJECT_STORAGE_KEY);
       if (raw) {
@@ -424,6 +515,12 @@ function App() {
         if (typeof saved.autoTiming === "boolean") setAutoTiming(saved.autoTiming);
         if (typeof saved.subtitles === "boolean") setSubtitles(saved.subtitles);
         if (typeof saved.outputDir === "string") setOutputDir(saved.outputDir);
+        if (saved.visionMode === "auto" || saved.visionMode === "quality" || saved.visionMode === "fast") {
+          setVisionMode(saved.visionMode);
+        }
+        if (Array.isArray(saved.sceneIndex)) setSceneIndex(saved.sceneIndex);
+        if (typeof saved.analysisVideoPath === "string") setAnalysisVideoPath(saved.analysisVideoPath);
+        if (typeof saved.editInstruction === "string") setEditInstruction(saved.editInstruction);
         if (Array.isArray(saved.timeline)) {
           setTimeline(saved.timeline);
           setSelectedSegmentId(saved.timeline[0]?.id ?? "");
@@ -482,6 +579,10 @@ function App() {
         deviceMode,
         timeline,
         videoDuration: videoInfo?.durationSeconds,
+        visionMode,
+        sceneIndex,
+        analysisVideoPath,
+        editInstruction,
       };
       localStorage.setItem(PROJECT_STORAGE_KEY, JSON.stringify(snapshot));
       setLastSavedAt(Date.now());
@@ -501,6 +602,10 @@ function App() {
     deviceMode,
     timeline,
     videoInfo?.durationSeconds,
+    visionMode,
+    sceneIndex,
+    analysisVideoPath,
+    editInstruction,
   ]);
 
   useEffect(() => {
@@ -548,6 +653,10 @@ function App() {
           } else if (!disposed) {
             setWaveform([]);
             setWaveformLoading(false);
+          }
+
+          if (!disposed && analysisVideoPath !== videoPath) {
+            void analyzeSourceVideo(videoPath);
           }
         }
       } catch (error) {
@@ -638,6 +747,12 @@ function App() {
     setVideoPath(path);
     setWaveform([]);
     setWaveformLoading(false);
+    setSceneIndex([]);
+    setAnalysisVideoPath("");
+    setAnalysisProgress(0);
+    setAnalysisMessage("");
+    setAiEditProgress(0);
+    setAiEditResult(null);
     setOutputPath("");
     setRenderProgress(0);
     setRenderStage("idle");
@@ -646,6 +761,92 @@ function App() {
     setTimelineDirty(false);
     setSelectedSegmentId("");
     setStatus("Video ready");
+  }
+
+  async function analyzeSourceVideo(path = videoPath) {
+    if (!runtime?.ready || !path || isAnalyzing || isAiEditing) return;
+
+    setIsAnalyzing(true);
+    setAnalysisProgress(0.02);
+    setAnalysisMessage("Preparing local video understanding");
+    setStatus("Analyzing video locally…");
+
+    try {
+      const result = await invoke<VideoAnalysisResult>("analyze_video", {
+        videoPath: path,
+        visionMode,
+        deviceMode,
+      });
+      if (videoPathRef.current !== path) return;
+
+      setSceneIndex(result.scenes);
+      setAnalysisVideoPath(path);
+      setAnalysisProgress(1);
+      setAnalysisMessage(
+        "Scene index ready · " +
+          String(result.sceneCount) +
+          " scenes · " +
+          (result.model?.includes("500M") ? "Fast model" : "Quality model"),
+      );
+      setStatus("Video understood · " + String(result.sceneCount) + " scenes");
+    } catch (error) {
+      if (videoPathRef.current === path) {
+        const message = error instanceof Error ? error.message : String(error);
+        setAnalysisMessage(message);
+        setStatus(message);
+      }
+    } finally {
+      if (videoPathRef.current === path) setIsAnalyzing(false);
+    }
+  }
+
+  async function runAiEdit() {
+    if (
+      !runtime?.ready ||
+      !videoPath ||
+      !editInstruction.trim() ||
+      isAiEditing ||
+      isAnalyzing ||
+      isGenerating
+    ) return;
+
+    setIsAiEditing(true);
+    setAiEditProgress(0.02);
+    setStatus("Starting local AI edit…");
+
+    try {
+      const result = await invoke<AiEditResult>("render_ai_edit", {
+        videoPath,
+        scenes:
+          analysisVideoPath === videoPath && sceneIndex.length > 0
+            ? sceneIndex
+            : null,
+        instruction: editInstruction.trim(),
+        visionMode,
+        deviceMode,
+        outputDir: outputDir || null,
+      });
+
+      if (result.analysis?.scenes?.length) {
+        setSceneIndex(result.analysis.scenes);
+        setAnalysisVideoPath(videoPath);
+        setAnalysisProgress(1);
+      }
+
+      setAiEditResult(result);
+      setAiEditProgress(1);
+      setOutputPath(result.video.path);
+      setStatus(
+        "AI edit ready · " +
+          String(result.plan.sceneIds.length) +
+          " scenes · " +
+          formatTime(result.video.durationSeconds ?? 0),
+      );
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsAiEditing(false);
+    }
   }
 
   async function buildTimeline() {
@@ -1057,6 +1258,10 @@ function App() {
       deviceMode,
       timeline,
       videoDuration: videoInfo?.durationSeconds,
+      visionMode,
+      sceneIndex,
+      analysisVideoPath,
+      editInstruction,
     };
   }
 
@@ -1089,6 +1294,19 @@ function App() {
     if (project.deviceMode === "auto" || project.deviceMode === "cuda" || project.deviceMode === "cpu") {
       setDeviceMode(project.deviceMode);
     }
+    if (project.visionMode === "auto" || project.visionMode === "quality" || project.visionMode === "fast") {
+      setVisionMode(project.visionMode);
+    }
+    setSceneIndex(Array.isArray(project.sceneIndex) ? project.sceneIndex : []);
+    setAnalysisVideoPath(
+      typeof project.analysisVideoPath === "string" ? project.analysisVideoPath : "",
+    );
+    setEditInstruction(
+      typeof project.editInstruction === "string" ? project.editInstruction : "",
+    );
+    setAnalysisProgress(Array.isArray(project.sceneIndex) && project.sceneIndex.length > 0 ? 1 : 0);
+    setAiEditResult(null);
+    setAiEditProgress(0);
     setOutputPath("");
     setRenderProgress(0);
     setRenderStage("idle");
@@ -1220,6 +1438,13 @@ function App() {
     setVideoInfo(null);
     setWaveform([]);
     setWaveformLoading(false);
+    setSceneIndex([]);
+    setAnalysisVideoPath("");
+    setAnalysisProgress(0);
+    setAnalysisMessage("");
+    setEditInstruction("");
+    setAiEditProgress(0);
+    setAiEditResult(null);
     setPreviewReady(false);
     setTimeline([]);
     setTimelineDirty(false);
@@ -1287,6 +1512,11 @@ function App() {
 
   const progressWidth = String(Math.max(0, Math.min(100, renderProgress * 100))) + "%";
   const runtimeProgressWidth = String(Math.max(0, Math.min(100, runtimeProgress * 100))) + "%";
+  const analysisProgressWidth =
+    String(Math.max(0, Math.min(100, analysisProgress * 100))) + "%";
+  const aiEditProgressWidth =
+    String(Math.max(0, Math.min(100, aiEditProgress * 100))) + "%";
+  const selectedVoicePreset = voices.find((item) => item.id === voice) ?? voices[0];
   const videoDuration = videoInfo?.durationSeconds ?? 0;
   const videoPreviewSrc = previewReady && videoPath ? convertFileSrc(videoPath) : "";
   const playheadRatio =
@@ -1480,6 +1710,178 @@ function App() {
             )}
           </section>
 
+          <section className="workspace-card ai-edit-card">
+            <div className="section-heading">
+              <div>
+                <span className="section-index ai-index">AI</span>
+                <div>
+                  <h2>Local AI edit</h2>
+                  <p>Describe the result you want. VideoMagic finds the scenes and makes a real cut.</p>
+                </div>
+              </div>
+              <div className="vision-mode-control" aria-label="Video AI model quality">
+                {(["auto", "fast", "quality"] as VisionMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    className={visionMode === mode ? "active" : ""}
+                    disabled={isAnalyzing || isAiEditing}
+                    onClick={() => setVisionMode(mode)}
+                  >
+                    {mode === "auto" ? "Auto" : mode === "fast" ? "Fast 500M" : "Quality 2.2B"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="analysis-status">
+              <div className="analysis-status-copy">
+                <span
+                  className={
+                    "analysis-dot " +
+                    (isAnalyzing
+                      ? "working"
+                      : sceneIndex.length > 0 && analysisVideoPath === videoPath
+                        ? "ready"
+                        : "")
+                  }
+                />
+                <div>
+                  <strong>
+                    {isAnalyzing
+                      ? "Analyzing video locally"
+                      : sceneIndex.length > 0 && analysisVideoPath === videoPath
+                        ? "Video understood"
+                        : "Video AI waiting"}
+                  </strong>
+                  <span>
+                    {isAnalyzing
+                      ? analysisMessage || "Loading the local video model…"
+                      : sceneIndex.length > 0 && analysisVideoPath === videoPath
+                        ? String(sceneIndex.length) + " timestamped scenes cached in this project."
+                        : videoPath
+                          ? "Analysis starts automatically when the local AI runtime is ready."
+                          : "Import a video to create a scene index."}
+                  </span>
+                </div>
+              </div>
+              {videoPath && runtime?.ready && !isAnalyzing && (
+                <button
+                  className="text-button"
+                  type="button"
+                  disabled={isAiEditing}
+                  onClick={() => void analyzeSourceVideo(videoPath)}
+                >
+                  Re-analyze
+                </button>
+              )}
+            </div>
+
+            {isAnalyzing && (
+              <div className="analysis-progress">
+                <div style={{ width: analysisProgressWidth }} />
+              </div>
+            )}
+
+            {sceneIndex.length > 0 && analysisVideoPath === videoPath && (
+              <div className="scene-index-strip">
+                {sceneIndex.slice(0, 8).map((scene) => (
+                  <button
+                    key={scene.id}
+                    type="button"
+                    title={scene.description}
+                    onClick={() => seekVideo(scene.start)}
+                  >
+                    <strong>{scene.id.replace("scene-", "")}</strong>
+                    <span>{formatTime(scene.start)}</span>
+                    <small>{scene.description}</small>
+                  </button>
+                ))}
+                {sceneIndex.length > 8 && (
+                  <div className="scene-index-more">+{sceneIndex.length - 8} scenes</div>
+                )}
+              </div>
+            )}
+
+            <div className="ai-edit-prompt">
+              <textarea
+                value={editInstruction}
+                onChange={(event) => setEditInstruction(event.target.value)}
+                placeholder="例如：只保留最搞笑和反应最强的部分，剪成节奏快的 15 秒短视频。&#10;Or: Cut the most dramatic moments into a fast 20-second highlight."
+              />
+              <div className="ai-edit-actions">
+                <span>
+                  {visionMode === "quality"
+                    ? "SmolVLM2 2.2B · best local understanding"
+                    : visionMode === "fast"
+                      ? "SmolVLM2 500M · lower VRAM / faster"
+                      : "Auto chooses the best model that fits local VRAM"}
+                </span>
+                <button
+                  className="primary-button ai-edit-button"
+                  type="button"
+                  disabled={
+                    !runtime?.ready ||
+                    !videoPath ||
+                    !editInstruction.trim() ||
+                    isAiEditing ||
+                    isAnalyzing ||
+                    isGenerating
+                  }
+                  onClick={() => void runAiEdit()}
+                >
+                  {isAiEditing ? "Editing locally…" : "Create AI edit"}
+                </button>
+              </div>
+            </div>
+
+            {isAiEditing && (
+              <div className="ai-edit-running">
+                <div className="analysis-progress">
+                  <div style={{ width: aiEditProgressWidth }} />
+                </div>
+                <div>
+                  <span>{Math.round(aiEditProgress * 100)}%</span>
+                  <button type="button" onClick={() => void cancelRender()}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {aiEditResult && (
+              <div className="ai-edit-result">
+                <div>
+                  <span className="output-label">AI EDIT READY</span>
+                  <strong>
+                    {aiEditResult.plan.title || fileName(aiEditResult.video.path)}
+                  </strong>
+                  <p>
+                    {aiEditResult.plan.summary ||
+                      String(aiEditResult.plan.sceneIds.length) + " scenes selected."}
+                  </p>
+                  <code>{aiEditResult.video.path}</code>
+                </div>
+                <div className="ai-edit-result-actions">
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => void openPath(parentDirectory(aiEditResult.video.path))}
+                  >
+                    Show in folder
+                  </button>
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={() => selectVideoPath(aiEditResult.video.path)}
+                  >
+                    Use as source
+                  </button>
+                </div>
+              </div>
+            )}
+          </section>
+
           <section className="workspace-card script-card">
             <div className="section-heading">
               <div>
@@ -1499,11 +1901,15 @@ function App() {
                 setScript(event.target.value);
                 if (timeline.length > 0) setTimelineDirty(true);
               }}
-              placeholder="比如：不是哥们，这猴子是真的没拿自己当外人。上来先把游客的可乐抢了，结果下一秒更离谱……"
+              placeholder="中文或 English：直接写你想让旁白说的内容。比如：不是哥们，这猴子是真的没拿自己当外人。 Or: This is where everything suddenly goes wrong…"
             />
 
             <div className="script-tools">
-              <span>Mandarin punctuation and natural pauses are supported.</span>
+              <span>
+                {selectedVoicePreset.language === "English"
+                  ? "English narration, punctuation and natural pauses are supported."
+                  : "Mandarin punctuation and natural pauses are supported."}
+              </span>
               <button
                 className="preview-button"
                 type="button"
@@ -2076,20 +2482,32 @@ function App() {
             )}
 
             <div className="voice-list">
-              {voices.map((item) => (
-                <button
-                  key={item.id}
-                  className={"voice-option " + (voice === item.id ? "selected" : "")}
-                  onClick={() => setVoice(item.id)}
-                  type="button"
-                >
-                  <div className="voice-avatar">{item.name.slice(0, 1)}</div>
-                  <div className="voice-copy">
-                    <strong>{item.name}</strong>
-                    <span>{item.description}</span>
+              {(["中文", "English"] as const).map((language) => (
+                <div className="voice-language-group" key={language}>
+                  <div className="voice-language-heading">
+                    <span>{language}</span>
+                    <small>
+                      {language === "English" ? "American + British" : "Mandarin"}
+                    </small>
                   </div>
-                  <em>{item.tag}</em>
-                </button>
+                  {voices
+                    .filter((item) => item.language === language)
+                    .map((item) => (
+                      <button
+                        key={item.id}
+                        className={"voice-option " + (voice === item.id ? "selected" : "")}
+                        onClick={() => setVoice(item.id)}
+                        type="button"
+                      >
+                        <div className="voice-avatar">{item.name.slice(0, 1)}</div>
+                        <div className="voice-copy">
+                          <strong>{item.name}</strong>
+                          <span>{item.description}</span>
+                        </div>
+                        <em>{item.tag}</em>
+                      </button>
+                    ))}
+                </div>
               ))}
             </div>
           </section>

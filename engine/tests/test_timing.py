@@ -81,7 +81,7 @@ class TimingTests(unittest.TestCase):
 
             self.assertTrue(output.exists())
             self.assertEqual(result["device"], "cpu")
-            load_pipeline.assert_called_once_with("cpu")
+            load_pipeline.assert_called_once_with("cpu", "zm_010")
 
     def test_plan_timeline_builds_non_overlapping_draft(self) -> None:
         result = plan_timeline(

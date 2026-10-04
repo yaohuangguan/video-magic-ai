@@ -52,6 +52,11 @@
 - [x] Timeline persistence in autosave and native .vmagic project files.
 - [x] Persistent render history with reusable settings.
 - [x] Warm local AI worker across preview/render requests.
+- [x] American/British English narration voices alongside Mandarin.
+- [x] Automatic local video scene analysis on import.
+- [x] Natural-language edit planning from timestamped scene descriptions.
+- [x] Real FFmpeg/NVENC source cutting from the local AI edit plan.
+- [ ] Qwen3-VL 4B quantized quality mode for stronger semantic editing on supported GPUs.
 - [x] Source-audio waveform visualization behind the narration timeline.
 - [x] Left/right resize handles directly on narration blocks.
 - [ ] Per-segment cached regeneration without re-synthesizing unchanged segments.
