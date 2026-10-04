@@ -167,6 +167,8 @@ $status = [ordered]@{
     engineDir = $EngineDir
     verification = ($verify | Select-Object -Last 1)
 }
-$status | ConvertTo-Json -Depth 4 | Set-Content -Encoding UTF8 (Join-Path $runtime "status.json")
+$statusPath = Join-Path $runtime "status.json"
+$statusJson = $status | ConvertTo-Json -Depth 4
+[System.IO.File]::WriteAllText($statusPath, $statusJson, (New-Object System.Text.UTF8Encoding($false)))
 Write-Step "done" "VideoMagic local runtime is ready"
 $status | ConvertTo-Json -Compress -Depth 4

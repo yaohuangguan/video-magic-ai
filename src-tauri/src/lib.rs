@@ -361,6 +361,46 @@ fn ensure_runtime_dirs(local: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn runtime_engine_dir(local: &Path) -> Option<PathBuf> {
+    let status_file = local.join("runtime").join("status.json");
+    if let Ok(content) = fs::read_to_string(&status_file) {
+        let content = content.trim_start_matches('\u{feff}');
+        if let Ok(status) = serde_json::from_str::<Value>(content) {
+            if let Some(path) = status
+                .get("engineDir")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+            {
+                let candidate = PathBuf::from(path);
+                if candidate.join("videomagic_engine").is_dir() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+
+    if let Ok(exe) = env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            let candidate = parent.join("engine");
+            if candidate.join("videomagic_engine").is_dir() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    {
+        if let Ok(root) = dev_project_root() {
+            let candidate = root.join("engine");
+            if candidate.join("videomagic_engine").is_dir() {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
+}
+
 fn configured_engine_command(
     python: &Path,
     local: &Path,
@@ -386,6 +426,17 @@ fn configured_engine_command(
         .env("TEMP", local.join("tmp"))
         .env("TMPDIR", local.join("tmp"))
         .env("PATH", path_env);
+
+    if let Some(engine_dir) = runtime_engine_dir(local) {
+        let mut python_paths = vec![engine_dir.clone()];
+        if let Some(existing) = env::var_os("PYTHONPATH") {
+            python_paths.extend(env::split_paths(&existing));
+        }
+        if let Ok(python_path) = env::join_paths(python_paths) {
+            command.env("PYTHONPATH", python_path);
+        }
+        command.current_dir(&engine_dir);
+    }
 
     if let Some(mode) = device_mode {
         if matches!(mode, "cpu" | "cuda") {
@@ -710,17 +761,26 @@ fn runtime_status_impl(app: &AppHandle) -> Result<Value, String> {
     let installed_schema = if status_file.exists() {
         fs::read_to_string(&status_file)
             .ok()
-            .and_then(|content| serde_json::from_str::<Value>(&content).ok())
+            .and_then(|content| {
+                let content = content.trim_start_matches('\u{feff}');
+                serde_json::from_str::<Value>(content).ok()
+            })
             .and_then(|value| value.get("schemaVersion").and_then(Value::as_u64))
             .unwrap_or(0)
     } else {
         0
     };
     let schema_current = installed_schema >= REQUIRED_RUNTIME_SCHEMA;
-    let needs_update =
-        portable.exists() && ffmpeg.exists() && status_file.exists() && !schema_current;
-    let portable_ready =
-        portable.exists() && ffmpeg.exists() && status_file.exists() && schema_current;
+    let engine_ready = runtime_engine_dir(&home).is_some();
+    let needs_update = portable.exists()
+        && ffmpeg.exists()
+        && status_file.exists()
+        && (!schema_current || !engine_ready);
+    let portable_ready = portable.exists()
+        && ffmpeg.exists()
+        && status_file.exists()
+        && schema_current
+        && engine_ready;
 
     #[cfg(debug_assertions)]
     let development_ready = development_python()?.exists() && command_available("ffmpeg");

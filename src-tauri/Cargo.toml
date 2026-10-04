@@ -1,6 +1,6 @@
 [package]
 name = "videomagic"
-version = "0.1.0"
+version = "0.1.8"
 description = "Local AI commentary studio"
 authors = ["VideoMagic"]
 edition = "2021"
