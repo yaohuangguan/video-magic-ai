@@ -159,6 +159,8 @@ if ($LASTEXITCODE -ne 0) {
 
 $status = [ordered]@{
     ready = $true
+    schemaVersion = 2
+    engineVersion = "0.2.0"
     python = $pythonExe
     ffmpeg = $ffmpegExe
     ffprobe = $ffprobeExe

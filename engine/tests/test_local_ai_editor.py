@@ -36,6 +36,17 @@ class LocalAiEditorTests(unittest.TestCase):
         self.assertEqual(result["segments"][0]["start"], 5.0)
         self.assertEqual(result["title"], "Reaction")
 
+    def test_auto_model_prefers_fast_on_8gb_class_gpu(self) -> None:
+        with (
+            patch("videomagic_engine.vision._device", return_value="cuda"),
+            patch("videomagic_engine.vision._free_gpu_gb", return_value=6.95),
+        ):
+            from videomagic_engine.vision import FAST_MODEL, QUALITY_MODEL, select_model
+
+            self.assertEqual(select_model("auto"), FAST_MODEL)
+            self.assertEqual(select_model("fast"), FAST_MODEL)
+            self.assertEqual(select_model("quality"), QUALITY_MODEL)
+
     def test_english_script_splits_on_sentence_punctuation(self) -> None:
         self.assertEqual(
             split_script("This starts quietly. Then everything changes! Final beat?"),

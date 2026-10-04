@@ -47,7 +47,7 @@ def select_model(mode: str = "auto") -> str:
         return QUALITY_MODEL
     if _device() != "cuda":
         return FAST_MODEL
-    return QUALITY_MODEL if _free_gpu_gb() >= 6.0 else FAST_MODEL
+    return QUALITY_MODEL if _free_gpu_gb() >= 10.0 else FAST_MODEL
 
 
 def release_model() -> None:
@@ -82,7 +82,7 @@ def _load_model(mode: str = "auto") -> tuple[Any, Any, str, str]:
     processor = AutoProcessor.from_pretrained(model_id)
     model = AutoModelForImageTextToText.from_pretrained(
         model_id,
-        torch_dtype=dtype,
+        dtype=dtype,
         low_cpu_mem_usage=True,
     )
     model = model.to(device)

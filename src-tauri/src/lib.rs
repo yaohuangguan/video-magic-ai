@@ -12,6 +12,8 @@ use std::sync::{
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager, State};
 
+const REQUIRED_RUNTIME_SCHEMA: u64 = 2;
+
 #[derive(Clone, Default)]
 struct RenderTaskState {
     pid: Arc<Mutex<Option<u32>>>,
@@ -681,6 +683,9 @@ fn runtime_status_impl(app: &AppHandle) -> Result<Value, String> {
             "portableReady": false,
             "developmentReady": false,
             "configured": false,
+            "needsUpdate": false,
+            "schemaVersion": 0,
+            "requiredSchemaVersion": REQUIRED_RUNTIME_SCHEMA,
             "dataDir": Value::Null,
             "message": "Choose a data folder to install the local AI runtime."
         }));
@@ -689,7 +694,20 @@ fn runtime_status_impl(app: &AppHandle) -> Result<Value, String> {
     let portable = portable_python(&home);
     let ffmpeg = local_ffmpeg(&home);
     let status_file = home.join("runtime").join("status.json");
-    let portable_ready = portable.exists() && ffmpeg.exists() && status_file.exists();
+    let installed_schema = if status_file.exists() {
+        fs::read_to_string(&status_file)
+            .ok()
+            .and_then(|content| serde_json::from_str::<Value>(&content).ok())
+            .and_then(|value| value.get("schemaVersion").and_then(Value::as_u64))
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    let schema_current = installed_schema >= REQUIRED_RUNTIME_SCHEMA;
+    let needs_update =
+        portable.exists() && ffmpeg.exists() && status_file.exists() && !schema_current;
+    let portable_ready =
+        portable.exists() && ffmpeg.exists() && status_file.exists() && schema_current;
 
     #[cfg(debug_assertions)]
     let development_ready = development_python()?.exists() && command_available("ffmpeg");
@@ -702,11 +720,16 @@ fn runtime_status_impl(app: &AppHandle) -> Result<Value, String> {
         "portableReady": portable_ready,
         "developmentReady": development_ready,
         "configured": true,
+        "needsUpdate": needs_update,
+        "schemaVersion": installed_schema,
+        "requiredSchemaVersion": REQUIRED_RUNTIME_SCHEMA,
         "dataDir": home,
         "python": if portable.exists() { Some(portable) } else { None },
         "ffmpeg": if ffmpeg.exists() { Some(ffmpeg) } else { None },
         "message": if portable_ready {
             "Local AI runtime ready."
+        } else if needs_update {
+            "Local AI runtime update required."
         } else if development_ready {
             "Development runtime ready."
         } else {
@@ -873,6 +896,7 @@ fn emit_runtime_progress(app: &AppHandle, line: &str) {
                 "uv" => 0.08,
                 "python" => 0.18,
                 "torch" => 0.38,
+                "vision" => 0.48,
                 "engine" => 0.64,
                 "ffmpeg" => 0.84,
                 "verify" => 0.95,

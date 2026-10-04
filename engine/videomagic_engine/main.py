@@ -77,7 +77,7 @@ def _gpu_info() -> dict[str, Any]:
 
 def doctor() -> dict[str, Any]:
     return {
-        "engineVersion": "0.1.0",
+        "engineVersion": "0.2.0",
         "python": sys.version.split()[0],
         "ffmpeg": shutil.which("ffmpeg"),
         "ffprobe": shutil.which("ffprobe"),

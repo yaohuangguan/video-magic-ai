@@ -144,6 +144,9 @@ type RuntimeStatus = {
   portableReady: boolean;
   developmentReady: boolean;
   configured: boolean;
+  needsUpdate?: boolean;
+  schemaVersion?: number;
+  requiredSchemaVersion?: number;
   dataDir?: string | null;
   message?: string;
 };
@@ -349,6 +352,7 @@ function App() {
   const timelineTrackRef = useRef<HTMLDivElement | null>(null);
   const projectHydrated = useRef(false);
   const videoPathRef = useRef("");
+  const runtimeRepairAttempted = useRef(false);
 
   const canGenerate = Boolean(
     runtime?.ready &&
@@ -494,6 +498,22 @@ function App() {
   useEffect(() => {
     setEngineWarm(false);
   }, [deviceMode]);
+
+  useEffect(() => {
+    if (
+      !runtime?.configured ||
+      !runtime.needsUpdate ||
+      !runtime.dataDir ||
+      isBootstrapping ||
+      runtimeRepairAttempted.current
+    ) {
+      return;
+    }
+
+    runtimeRepairAttempted.current = true;
+    setStatus("Updating local AI runtime for VideoMagic AI editing…");
+    void setupRuntime(true);
+  }, [runtime?.configured, runtime?.needsUpdate, runtime?.dataDir, isBootstrapping]);
 
   useEffect(() => {
     videoPathRef.current = videoPath;

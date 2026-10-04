@@ -1,6 +1,6 @@
 # VideoMagic
 
-Local-first AI commentary studio for turning a source video and narration script into a finished voiceover video.
+Local-first AI video editor and commentary studio. Import a video, let an open-source video model understand it, describe the cut you want, then add Mandarin or English narration and render locally.
 
 [Website](https://videomagic.pages.dev/) · [Download Windows](https://github.com/yaohuangguan/video-magic-ai/releases/latest/download/VideoMagic-Windows-x64-setup.exe) · [Releases](https://github.com/yaohuangguan/video-magic-ai/releases) · [Roadmap](ROADMAP.md) · [Support](SUPPORT.md)
 
@@ -13,20 +13,16 @@ Local-first AI commentary studio for turning a source video and narration script
 
 Current working flow:
 
-1. Import a local video.
-2. Paste a Mandarin commentary script.
-3. Pick a local Mandarin or English voice preset.
-4. Generate speech locally with Kokoro on CUDA or CPU.
-5. Optionally let the local open-source video model analyze the source automatically, then describe the edit you want in plain language.
-6. Render a real AI-selected cut with FFmpeg/NVENC, or continue into the narration workflow.
-7. Split Mandarin or English scripts into sentence-level narration segments and fit them to the clip duration.
-6. Optionally switch to the visual creator timeline and drag narration segments to exact positions.
-7. Preview the local source video and seek it directly from the narration timeline.
-8. Generate synchronized subtitles from the same narration timeline.
-9. Apply narration-aware source-audio ducking.
-10. Burn subtitles with GPU-accelerated H.264 when available.
-11. Stream render progress to the desktop UI and allow cancellation.
-12. Export a finished H.264/AAC MP4 to a user-selected folder.
+1. Import or drag in a local video.
+2. VideoMagic automatically builds a timestamped scene index with a local open-source video model.
+3. Describe an edit in natural language, such as “keep the funniest reactions and make a short highlight”.
+4. VideoMagic selects real scene IDs and FFmpeg/NVENC performs the actual trim/concat render.
+5. Use the AI-edited result as a new source, or continue with the original video.
+6. Write Mandarin or English narration and pick a local voice preset.
+7. Generate speech locally with Kokoro on CUDA or CPU.
+8. Auto-place narration, or use the visual timeline to drag/resize sentence blocks against the source waveform.
+9. Generate synchronized subtitles and narration-aware source-audio ducking.
+10. Export a finished H.264/AAC MP4 to a user-selected folder.
 
 The source video never needs to be uploaded for the core workflow. Voice presets can be previewed before rendering. Local AI edit uses SmolVLM2 video understanding today: a 500M fast model for low-VRAM analysis and a 2.2B quality model when more GPU memory is available.
 
@@ -38,20 +34,17 @@ The desktop workspace also supports drag-and-drop import, secure local video pre
 React + TypeScript
       |
       v
-Tauri 2
-      |
-      v
-Rust command bridge
+Tauri 2 + Rust command bridge
       |
       v
 Python 3.11 local engine
-   |              |
-   v              v
-Kokoro 82M      FFmpeg
-Mandarin TTS    probe / mix / export
+   |                 |                    |
+   v                 v                    v
+Kokoro 82M        SmolVLM2             FFmpeg
+ZH / EN TTS       video understanding  probe / cut / concat / mix / subtitles / export
 ```
 
-Kokoro is the V0.1 fixed-voice engine because it is small enough for a fast local MVP and works on the current Windows CUDA setup.
+Kokoro is the current fixed-voice engine for Mandarin and American/British English narration. Local AI Edit uses SmolVLM2: Fast uses the 500M video model and Quality uses the larger 2.2B model. Auto stays on the 500M model on 8GB-class GPUs and only promotes to Quality when there is substantially more free VRAM.
 
 GPT-SoVITS remains a planned pluggable engine for custom voice cloning, dialect/style voices, and stronger character voices. The UI and engine are intentionally separated so voice engines can be swapped without rewriting the desktop app.
 
@@ -64,7 +57,7 @@ Verified on the Windows development PC:
 - managed Python 3.11.17 installed by VideoMagic bootstrap;
 - PyTorch 2.11.0 + CUDA 12.8;
 - NVIDIA RTX 2080 SUPER;
-- Kokoro 0.9.4 + Misaki Chinese frontend;
+- Kokoro 0.9.4 + Misaki Mandarin/English frontends;
 - app-local FFmpeg / FFprobe;
 - Tauri 2 release build and NSIS installer;
 - installer resources for bootstrap + Python engine;
@@ -90,9 +83,14 @@ Verified on the Windows development PC:
 - source-audio waveform extraction rendered behind the narration track;
 - direct drag and left/right resize handles for narration timing windows;
 - persistent render history and reusable export settings;
-- persistent warm Kokoro worker across preview/render requests.
+- persistent warm Kokoro worker across preview/render requests;
+- American English narration (`am_michael`) generated successfully on CUDA;
+- SmolVLM2-500M video understanding generated real scene descriptions on CUDA;
+- natural-language AI Edit selected a real scene ID and rendered a new MP4 with FFmpeg/NVENC;
+- Auto video-model selection stays on the verified 500M Fast model at ~6.95GB free VRAM;
+- runtime schema v2 detects and repairs older local runtimes before enabling the new AI-edit features.
 
-A real 12-second end-to-end render has been completed from the bootstrapped runtime without using the development venv or system FFmpeg. A custom two-segment timeline was also rendered successfully with narration starting at 1.0s and 7.0s; waveform checks confirmed silence outside the edited narration windows. On the RTX 2080 SUPER, repeated TTS on a warm worker measured about 0.18s after a roughly 14.4s cold start in the test case.
+A real 12-second end-to-end narration render and a separate natural-language AI Edit have both been completed from the local runtime without cloud inference. A custom two-segment timeline was also rendered successfully with narration starting at 1.0s and 7.0s; waveform checks confirmed silence outside the edited narration windows. On the RTX 2080 SUPER, repeated TTS on a warm worker measured about 0.18s after a roughly 14.4s cold start in the test case.
 
 ## Local storage
 

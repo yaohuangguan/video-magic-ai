@@ -4,20 +4,20 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#f6f3ec" />
-  <meta name="description" content="VideoMagic is a local-first Windows studio that turns a video and narration script into a finished AI voiceover video." />
-  <meta property="og:title" content="VideoMagic — Local AI voiceover studio" />
-  <meta property="og:description" content="Import a clip, write narration, edit timing on a visual timeline, and render locally." />
+  <meta name="description" content="VideoMagic is a local-first Windows AI video editor: import a video, describe the cut you want, then add Mandarin or English narration and render on your own GPU." />
+  <meta property="og:title" content="VideoMagic — Local AI video editor" />
+  <meta property="og:description" content="Load a video, let a local open-source model understand it, describe your edit, then add Mandarin or English narration." />
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://videomagic.pages.dev/" />
   <meta property="og:image" content="https://videomagic.pages.dev/icon.png" />
   <meta name="twitter:card" content="summary" />
-  <meta name="twitter:title" content="VideoMagic — Local AI Voiceover Studio" />
-  <meta name="twitter:description" content="Import a clip, write narration, edit timing on a visual timeline, and render locally." />
+  <meta name="twitter:title" content="VideoMagic — Local AI Video Editor" />
+  <meta name="twitter:description" content="Describe the cut you want, edit with a local video model, then add Mandarin or English narration." />
   <meta name="twitter:image" content="https://videomagic.pages.dev/icon.png" />
   <link rel="icon" href="./icon.png" />
   <link rel="canonical" href="https://videomagic.pages.dev/" />
   <link rel="stylesheet" href="./styles.css" />
-  <title>VideoMagic — Local AI Voiceover Studio</title>
+  <title>VideoMagic — Local AI Video Editor</title>
 </head>
 <body>
   <header class="nav shell">
@@ -38,10 +38,9 @@
     <section class="hero shell">
       <div class="hero-copy">
         <div class="eyebrow"><span></span> WINDOWS FIRST · LOCAL BY DEFAULT</div>
-        <h1>Turn a clip and script into a finished <em>AI voiceover video.</em></h1>
+        <h1>Load a video. Describe the result. <em>Let local AI cut it.</em></h1>
         <p class="hero-lead">
-          Import a local video, write the narration, place each sentence on a visual timeline,
-          preview the voice, then render subtitles, ducking and the final MP4 on your own PC.
+          VideoMagic understands the source with an open-source video model, turns a plain-language request into real scene selections, renders the cut with FFmpeg, then lets you add Mandarin or English narration, subtitles and ducking — all on your PC.
         </p>
         <div class="hero-actions">
           <a class="button primary download-link" href="https://github.com/yaohuangguan/video-magic-ai/releases/latest/download/VideoMagic-Windows-x64-setup.exe">
@@ -54,8 +53,8 @@
         </div>
         <div class="hero-meta">
           <span>✓ Source video stays local</span>
-          <span>✓ CUDA or CPU</span>
-          <span>✓ No cloud TTS API required</span>
+          <span>✓ Open-source local video model</span>
+          <span>✓ Mandarin + English narration</span>
         </div>
       </div>
 
@@ -93,23 +92,23 @@
     </section>
 
     <section class="proof shell">
-      <div><strong>Local media</strong><span>Video never needs to be uploaded for the core workflow.</span></div>
-      <div><strong>Real timeline</strong><span>Dragging a block changes where narration is physically rendered.</span></div>
-      <div><strong>Native output</strong><span>H.264/AAC MP4, synchronized subtitles and smart ducking.</span></div>
+      <div><strong>Local video AI</strong><span>SmolVLM2 builds a timestamped scene index without uploading the source.</span></div>
+      <div><strong>Real edits</strong><span>The model selects scene IDs; FFmpeg performs the actual trim and concat.</span></div>
+      <div><strong>Native output</strong><span>H.264/AAC MP4, Mandarin/English voiceover, subtitles and smart ducking.</span></div>
     </section>
 
     <section class="section shell" id="workflow">
       <div class="section-intro">
         <span class="section-kicker">THE WORKFLOW</span>
-        <h2>From source clip to finished commentary, in one workspace.</h2>
-        <p>The simple path stays simple. Use automatic timing when it is good enough, or open the creator timeline when you want control.</p>
+        <h2>From raw video to AI-selected cut and finished commentary, in one workspace.</h2>
+        <p>Import once, let VideoMagic understand the footage, describe what you want kept, then continue into narration and timeline editing without leaving the desktop app.</p>
       </div>
 
       <div class="steps">
-        <article><span>01</span><h3>Import</h3><p>Choose or drag in MP4, MOV, MKV, WEBM or M4V. VideoMagic probes duration and audio locally.</p></article>
-        <article><span>02</span><h3>Write</h3><p>Paste Mandarin narration and choose a local voice preset. Preview the voice before committing to a render.</p></article>
-        <article><span>03</span><h3>Time it</h3><p>Auto-spread sentences, or drag and resize narration blocks against the source-audio waveform.</p></article>
-        <article><span>04</span><h3>Render</h3><p>Generate voice, synchronized subtitles, source-audio ducking and the final MP4 with progress and cancel controls.</p></article>
+        <article><span>01</span><h3>Import</h3><p>Drag in MP4, MOV, MKV, WEBM or M4V. Local analysis begins automatically and builds a timestamped scene index.</p></article>
+        <article><span>02</span><h3>Describe the cut</h3><p>Write “keep the funniest reactions” or “make a fast 20-second highlight”. The model selects only real scene IDs.</p></article>
+        <article><span>03</span><h3>Add narration</h3><p>Use Mandarin, American English or British English voices, then auto-time or manually place each sentence.</p></article>
+        <article><span>04</span><h3>Render</h3><p>FFmpeg/NVENC performs the cut, mix, subtitles, ducking and final MP4 with progress and cancel controls.</p></article>
       </div>
     </section>
 
@@ -124,8 +123,8 @@
           <article class="feature large">
             <div class="feature-number">01</div>
             <div>
-              <h3>Visual narration timeline</h3>
-              <p>Sentence-level blocks are real render inputs. Drag a block to move narration, pull either edge to change its timing window, or type exact start and end values.</p>
+              <h3>Natural-language AI editing</h3>
+              <p>VideoMagic builds timestamped scene descriptions locally. Your prompt selects real scene IDs, then FFmpeg performs the actual cuts — the model never invents render timestamps.</p>
             </div>
             <div class="mini-timeline">
               <div class="mini-wave"></div>
@@ -183,13 +182,14 @@
         <div class="arch-card"><small>LOCAL ENGINE</small><strong>Python 3.11</strong><span>Persistent worker</span></div>
         <i>→</i>
         <div class="arch-stack">
-          <div><strong>Kokoro</strong><span>Mandarin TTS</span></div>
-          <div><strong>FFmpeg</strong><span>Waveform · mix · subtitles · export</span></div>
+          <div><strong>SmolVLM2</strong><span>500M Fast · 2.2B Quality video understanding</span></div>
+          <div><strong>Kokoro</strong><span>Mandarin · American/British English TTS</span></div>
+          <div><strong>FFmpeg</strong><span>Scene cuts · concat · waveform · mix · subtitles · export</span></div>
         </div>
       </div>
 
       <div class="local-notes">
-        <article><strong>Your source file</strong><span>remains on the PC during the core voiceover workflow.</span></article>
+        <article><strong>Your source file</strong><span>remains on the PC during video understanding, AI editing and voiceover rendering.</span></article>
         <article><strong>Large AI data</strong><span>can live on a drive you choose instead of filling the system disk.</span></article>
         <article><strong>GPU acceleration</strong><span>prefers NVIDIA CUDA/NVENC when available and can fall back to CPU.</span></article>
       </div>
@@ -227,8 +227,8 @@
         <h2>Windows-first V0.1, actively evolving.</h2>
       </div>
       <div class="status-grid">
-        <div><strong>Working now</strong><p>Local Mandarin TTS, auto/manual timing, timeline waveform, resize handles, subtitles, ducking, CUDA/CPU selection, render history and project files.</p></div>
-        <div><strong>Next</strong><p>Per-segment audio caching, stronger/custom voices, clean-machine validation, code signing and updater hardening.</p></div>
+        <div><strong>Working now</strong><p>Automatic local scene analysis, natural-language AI cuts, Mandarin/English TTS, timeline waveform, subtitles, ducking, CUDA/CPU selection, render history and project files.</p></div>
+        <div><strong>Next</strong><p>Stronger quantized quality models, per-segment audio caching, custom voices, clean-machine validation, code signing and updater hardening.</p></div>
         <div><strong>Not pretending yet</strong><p>This is not a full Premiere replacement and it is not a cloud collaboration suite. The focus is fast local AI commentary creation.</p></div>
       </div>
     </section>
@@ -239,7 +239,7 @@
       <img src="./icon.png" alt="" />
       <span>VideoMagic</span>
     </div>
-    <p>Local AI voiceover studio.</p>
+    <p>Local AI video editor and voiceover studio.</p>
     <div>
       <a href="https://github.com/yaohuangguan/video-magic-ai">GitHub</a>
       <a href="https://github.com/yaohuangguan/video-magic-ai/releases">Releases</a>
